@@ -3,24 +3,32 @@
 The rules live here, not in the prompt: photo size is capped, every input is checked,
 a "fail" (the part gets scrapped) needs a human's yes, and everything is audit-logged.
 
-    inspection-camera        # stdio MCP server (started by a client such as Claude Code)
+    inspection-camera                 # stdio MCP server (started by a client such as Claude Code)
+    inspection-camera --http [--host 0.0.0.0] [--port 8000]
+                                      # over the network, at http://<host>:<port>/mcp
 
 Environment:
     CAMERA       "fake" (default) or the path of a V4L2 camera, such as
                  /dev/v4l/by-id/usb-046d_0825_<serial>-video-index0
     SAMPLES_DIR  photos the fake camera serves (default: samples/)
     DATA_DIR     where photos (captures/) and logs (logs/) are kept (default: this repo)
+    API_KEY      with --http: the secret key every client must send, at least 32 characters
 """
 
+import argparse
 import asyncio
+import hmac
 import io
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
 from mcp.server import MCPServer
+from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.elicitation import AcceptedElicitation, ElicitationResult
 from mcp.server.mcpserver import Elicit, Image, Resolve
 from mcp.server.mcpserver.exceptions import ToolError
@@ -36,6 +44,7 @@ MAX_PHOTO = (1280, 720)   # longest photo the AI is sent, in pixels
 ZOOM_SIZE = 1024          # longer side of an enlarged crop, in pixels
 MIN_ZOOM = 0.1            # smallest crop, as a fraction of the photo's width or height
 MAX_FINDINGS = 500        # characters
+MIN_KEY_LENGTH = 32       # characters of API_KEY
 
 ImageId = Annotated[str, Field(
     pattern=r"^\d{8}-\d{6}(-\d+)?$",
@@ -58,7 +67,20 @@ class InspectionRecord(BaseModel):
     note: str = ""
 
 
-def create_server(camera, data_dir: str | Path = REPO) -> MCPServer:
+class ApiKeyVerifier:
+    """Accepts one secret key, sent by the client as "Authorization: Bearer <key>"."""
+
+    def __init__(self, key: str):
+        self.key = key.encode()
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if hmac.compare_digest(token.encode(), self.key):  # same time for every wrong key
+            return AccessToken(token=token, client_id="api-key", scopes=[])
+        return None
+
+
+def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | None = None,
+                  token_verifier=None) -> MCPServer:
     captures = Path(data_dir) / "captures"
     logs = Path(data_dir) / "logs"
     captures.mkdir(parents=True, exist_ok=True)
@@ -103,6 +125,8 @@ def create_server(camera, data_dir: str | Path = REPO) -> MCPServer:
             "instead of guessing. Record results with record_inspection; recording a "
             "fail needs a human's confirmation. When unsure, say so and record 'unsure'."
         ),
+        auth=auth,
+        token_verifier=token_verifier,
     )
 
     @mcp.tool(annotations=ToolAnnotations(destructive_hint=False))
@@ -206,13 +230,40 @@ def create_server(camera, data_dir: str | Path = REPO) -> MCPServer:
     return mcp
 
 
+def key_auth(key: str) -> dict:
+    """Settings for create_server: every request must carry the secret key."""
+    # The SDK's token check needs an issuer URL; with a fixed key nobody issues tokens,
+    # and without resource_server_url the URL is never published.
+    return {"auth": AuthSettings(issuer_url="http://localhost", resource_server_url=None),
+            "token_verifier": ApiKeyVerifier(key)}
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="The inspection station as an MCP server.")
+    parser.add_argument("--http", action="store_true",
+                        help="serve over the network instead of stdio; needs API_KEY")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="address to listen on (default: this computer only; "
+                             "0.0.0.0: every network it is on)")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+
     device = os.environ.get("CAMERA", "fake")
     if device == "fake":
         camera = FakeCamera(os.environ.get("SAMPLES_DIR", REPO / "samples"))
     else:
         camera = RealCamera(device)
-    create_server(camera, os.environ.get("DATA_DIR", REPO)).run()
+    data_dir = os.environ.get("DATA_DIR", REPO)
+
+    if not args.http:
+        create_server(camera, data_dir).run()
+        return
+    key = os.environ.get("API_KEY", "")
+    if len(key) < MIN_KEY_LENGTH:
+        sys.exit(f"Set API_KEY to a secret of at least {MIN_KEY_LENGTH} characters, e.g.\n"
+                 '    export API_KEY="$(python -c "import secrets; print(secrets.token_urlsafe(32))")"')
+    server = create_server(camera, data_dir, **key_auth(key))
+    server.run("streamable-http", host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
