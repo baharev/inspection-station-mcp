@@ -2,10 +2,12 @@
 
 The rules live here, not in the prompt: photo size is capped, every input is checked,
 a "fail" (the part gets scrapped) needs a human's yes, and everything is audit-logged.
+Over the network, every request needs a secret key or a login, and a login's roles
+decide which tools its user may call.
 
     inspection-camera                 # stdio MCP server (started by a client such as Claude Code)
-    inspection-camera --http [--host 0.0.0.0] [--port 8000]
-                                      # over the network, at http://<host>:<port>/mcp
+    inspection-camera --http [--host 0.0.0.0] [--port 8000] [--tls-cert C --tls-key K]
+                                      # over the network, at http(s)://<host>:<port>/mcp
 
 Environment:
     CAMERA       "fake" (default) or the path of a V4L2 camera, such as
@@ -13,6 +15,10 @@ Environment:
     SAMPLES_DIR  photos the fake camera serves (default: samples/)
     DATA_DIR     where photos (captures/) and logs (logs/) are kept (default: this repo)
     API_KEY      with --http: the secret key every client must send, at least 32 characters
+    OAUTH_ISSUER with --http, instead of API_KEY: the login server (OAuth authorization
+                 server) whose tokens are accepted, e.g. http://localhost:8080/realms/inspection
+    SERVER_URL   with OAUTH_ISSUER: this server's address as clients use it, e.g.
+                 http://localhost:8000/mcp; tokens must be issued for it
 """
 
 import argparse
@@ -25,8 +31,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.request import urlopen
 
+import jwt
+import uvicorn
 from mcp.server import MCPServer
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.elicitation import AcceptedElicitation, ElicitationResult
@@ -46,6 +56,11 @@ MIN_ZOOM = 0.1            # smallest crop, as a fraction of the photo's width or
 MAX_FINDINGS = 500        # characters
 MIN_KEY_LENGTH = 32       # characters of API_KEY
 
+# Who may call which tool. Logins carry their roles in the token's "roles" claim; the
+# person at this computer (stdio) and the holder of the secret key may call everything.
+VIEWER, INSPECTOR = "viewer", "inspector"
+ALL_ROLES = [VIEWER, INSPECTOR]
+
 ImageId = Annotated[str, Field(
     pattern=r"^\d{8}-\d{6}(-\d+)?$",
     description="The photo's ID, as returned by capture_image, e.g. 20261014-213005",
@@ -64,6 +79,8 @@ class InspectionRecord(BaseModel):
     verdict: Literal["pass", "fail", "unsure"]
     findings: str
     confirmed_by_human: bool = Field(description="True when a human confirmed a fail")
+    recorded_by: str = Field(description="Who recorded it: a login's user name, "
+                                         "'api-key' or 'local'")
     note: str = ""
 
 
@@ -75,8 +92,28 @@ class ApiKeyVerifier:
 
     async def verify_token(self, token: str) -> AccessToken | None:
         if hmac.compare_digest(token.encode(), self.key):  # same time for every wrong key
-            return AccessToken(token=token, client_id="api-key", scopes=[])
+            return AccessToken(token=token, client_id="api-key", scopes=[], subject="api-key",
+                               claims={"roles": ALL_ROLES})
         return None
+
+
+class JwtVerifier:
+    """Accepts access tokens (JWTs) signed by the login server and issued for this server."""
+
+    def __init__(self, issuer: str, audience: str, signing_key):
+        # signing_key(token) returns the login server's public key for the token
+        self.issuer, self.audience, self.signing_key = issuer, audience, signing_key
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        try:
+            key = await asyncio.to_thread(self.signing_key, token)
+            claims = jwt.decode(token, key, algorithms=["RS256"], issuer=self.issuer,
+                                audience=self.audience, options={"require": ["exp", "sub"]})
+        except jwt.PyJWTError:
+            return None
+        return AccessToken(token=token, client_id=claims.get("azp", ""),
+                           scopes=claims.get("scope", "").split(), expires_at=claims["exp"],
+                           subject=claims["sub"], claims=claims)
 
 
 def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | None = None,
@@ -87,10 +124,24 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
     logs.mkdir(parents=True, exist_ok=True)
     inspection_log = logs / "inspections.jsonl"
 
+    def caller() -> tuple[str, list[str]]:
+        """The caller's name and roles, from the token of the current request."""
+        token = get_access_token()
+        if token is None:   # stdio: the person at this computer
+            return "local", ALL_ROLES
+        claims = token.claims or {}
+        return claims.get("preferred_username") or token.subject, claims.get("roles", [])
+
     # Never print() in a stdio server: stdout carries the protocol. Logs go to files.
     def audit(text: str) -> None:
         with open(logs / "audit.log", "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().isoformat(timespec='seconds')} {text}\n")
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} {caller()[0]} {text}\n")
+
+    def require(role: str, tool: str) -> None:
+        name, roles = caller()
+        if role not in roles:
+            audit(f"REFUSED {tool}: needs the role {role}")
+            raise ToolError(f"{name} may not use {tool}: it needs the role '{role}'.")
 
     def photo_path(image_id: str) -> Path:
         path = captures / f"{image_id}.jpg"
@@ -132,6 +183,7 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
     @mcp.tool(annotations=ToolAnnotations(destructive_hint=False))
     async def capture_image() -> list:
         """Take a photo of the inspection station. Returns the photo and its ID."""
+        require(VIEWER, "capture_image")
         try:
             photo = await asyncio.to_thread(camera.take)
         except CameraError as err:
@@ -163,6 +215,7 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         quarter is left=0.5, top=0, width=0.5, height=0.5. Enlarging shows what the
         camera captured more clearly; it cannot add detail the camera did not capture.
         """
+        require(VIEWER, "zoom_image")
         if width < MIN_ZOOM or height < MIN_ZOOM:
             audit(f"REFUSED zoom_image {image_id}: too small")
             raise ToolError(f"The rectangle is too small: width and height must be at least "
@@ -188,6 +241,7 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         # Runs before the tool body. Only a fail asks the human, and only for a valid record.
         if verdict != "fail":
             return None
+        require(INSPECTOR, "record_inspection")
         check_record(image_id)
         return Elicit(f"Record part {part_id} as FAILED (it will be scrapped)? "
                       f"Photo {image_id}. Findings: {findings}", Confirmation)
@@ -207,6 +261,7 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         Verdict pass, fail or unsure. A fail means the part is scrapped, so a human
         must confirm it first.
         """
+        require(INSPECTOR, "record_inspection")
         check_record(image_id)
         confirmed = False
         if verdict == "fail":
@@ -218,6 +273,7 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         record = InspectionRecord(
             time=datetime.now().isoformat(timespec="seconds"), image_id=image_id,
             part_id=part_id, verdict=verdict, findings=findings, confirmed_by_human=confirmed,
+            recorded_by=caller()[0],
         )
         with open(inspection_log, "a", encoding="utf-8") as f:
             f.write(record.model_dump_json(exclude={"note"}) + "\n")
@@ -238,14 +294,35 @@ def key_auth(key: str) -> dict:
             "token_verifier": ApiKeyVerifier(key)}
 
 
+def oauth_auth(issuer: str, server_url: str, signing_key=None) -> dict:
+    """Settings for create_server: every request must carry a token from the login server.
+
+    signing_key(token) returns the public key to check a token with; by default the
+    login server's published keys are used.
+    """
+    issuer = issuer.rstrip("/")
+    if signing_key is None:
+        # The login server publishes where its public keys are (OpenID Connect discovery).
+        with urlopen(f"{issuer}/.well-known/openid-configuration", timeout=10) as response:
+            signing_key = jwt.PyJWKClient(json.load(response)["jwks_uri"]).get_signing_key_from_jwt
+    # resource_server_url publishes, for clients such as Claude Code, which login server
+    # to use. The verifier checks that a token was issued for this server (its audience).
+    return {"auth": AuthSettings(issuer_url=issuer, resource_server_url=server_url,
+                                 validate_token_resource=False),
+            "token_verifier": JwtVerifier(issuer, server_url, signing_key)}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="The inspection station as an MCP server.")
     parser.add_argument("--http", action="store_true",
-                        help="serve over the network instead of stdio; needs API_KEY")
+                        help="serve over the network instead of stdio; "
+                             "needs API_KEY or OAUTH_ISSUER and SERVER_URL")
     parser.add_argument("--host", default="127.0.0.1",
                         help="address to listen on (default: this computer only; "
                              "0.0.0.0: every network it is on)")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--tls-cert", help="with --http: certificate file, for HTTPS")
+    parser.add_argument("--tls-key", help="with --http: the certificate's private key file")
     args = parser.parse_args()
 
     device = os.environ.get("CAMERA", "fake")
@@ -258,12 +335,21 @@ def main() -> None:
     if not args.http:
         create_server(camera, data_dir).run()
         return
-    key = os.environ.get("API_KEY", "")
-    if len(key) < MIN_KEY_LENGTH:
-        sys.exit(f"Set API_KEY to a secret of at least {MIN_KEY_LENGTH} characters, e.g.\n"
-                 '    export API_KEY="$(python -c "import secrets; print(secrets.token_urlsafe(32))")"')
-    server = create_server(camera, data_dir, **key_auth(key))
-    server.run("streamable-http", host=args.host, port=args.port)
+    key, issuer = os.environ.get("API_KEY", ""), os.environ.get("OAUTH_ISSUER", "")
+    if issuer and not key:
+        server_url = os.environ.get("SERVER_URL") or sys.exit(
+            "Set SERVER_URL to this server's address as clients use it, "
+            f"e.g. http://localhost:{args.port}/mcp")
+        auth = oauth_auth(issuer, server_url)
+    elif len(key) >= MIN_KEY_LENGTH and not issuer:
+        auth = key_auth(key)
+    else:
+        sys.exit(f"Set either API_KEY, to a secret of at least {MIN_KEY_LENGTH} characters, e.g.\n"
+                 '    export API_KEY="$(python -c "import secrets; print(secrets.token_urlsafe(32))")"\n'
+                 "or OAUTH_ISSUER and SERVER_URL, for logins.")
+    app = create_server(camera, data_dir, **auth).streamable_http_app(host=args.host)
+    uvicorn.run(app, host=args.host, port=args.port,
+                ssl_certfile=args.tls_cert, ssl_keyfile=args.tls_key)
 
 
 if __name__ == "__main__":

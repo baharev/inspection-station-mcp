@@ -184,7 +184,8 @@ async def test_pass_is_recorded_without_asking_anyone(server, tmp_path):
     [line] = log_lines(tmp_path, "inspections.jsonl")
     assert json.loads(line) | {"time": None} == {
         "time": None, "image_id": image_id, "part_id": "tray-07", "verdict": "pass",
-        "findings": "All three tools present.", "confirmed_by_human": False}
+        "findings": "All three tools present.", "confirmed_by_human": False,
+        "recorded_by": "local"}
 
 
 async def test_unsure_is_recorded_and_says_a_person_should_look(server):

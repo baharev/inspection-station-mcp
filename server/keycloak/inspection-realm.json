@@ -1,0 +1,64 @@
+{
+  "realm": "inspection",
+  "enabled": true,
+  "displayName": "Inspection camera (demo: passwords for trying it out, never for a real station)",
+  "roles": {
+    "realm": [
+      {"name": "viewer", "description": "May take photos and look closer"},
+      {"name": "inspector", "description": "May also record inspection results"}
+    ]
+  },
+  "users": [
+    {
+      "username": "inspector", "enabled": true, "emailVerified": true,
+      "firstName": "Demo", "lastName": "Inspector", "email": "inspector@example.com",
+      "credentials": [{"type": "password", "value": "inspector", "temporary": false}],
+      "realmRoles": ["viewer", "inspector"]
+    },
+    {
+      "username": "viewer", "enabled": true, "emailVerified": true,
+      "firstName": "Demo", "lastName": "Viewer", "email": "viewer@example.com",
+      "credentials": [{"type": "password", "value": "viewer", "temporary": false}],
+      "realmRoles": ["viewer"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "claude-code",
+      "name": "Claude Code",
+      "description": "The AI application that calls the inspection camera",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:33418/callback"],
+      "webOrigins": [],
+      "attributes": {"pkce.code.challenge.method": "S256"},
+      "protocolMappers": [
+        {
+          "name": "audience: the inspection camera",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "${MCP_SERVER_URL:http://localhost:8000/mcp}",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -14,3 +14,6 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+
+# HTTPS certificates made by scripts/make_certs.sh, private keys included
+certs/
