@@ -1,23 +1,28 @@
 """Take one test photo with a real camera and save it to captures/, without MCP.
 
-    python scripts/check_camera.py /dev/v4l/by-id/<your camera>-video-index0
+    python scripts/check_camera.py <camera>
 
-Without an argument it lists the cameras found. The photo is real: look at it before
-sharing it anywhere (captures/ is git-ignored).
+<camera> is what CAMERA is set to: on Linux the camera's /dev/v4l/by-id/ path, on
+Windows and macOS its name or device path. Without an argument it lists the cameras
+found, with their names (on Linux also whether each is built in or plugged in). The
+photo is real: look at it before sharing it anywhere (captures/ is git-ignored).
 """
 
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from inspection_camera.camera import CameraError, RealCamera
+from inspection_camera.camera import CameraError, RealCamera, list_cameras
 
 if len(sys.argv) != 2:
-    found = sorted(Path("/dev/v4l/by-id").glob("*-video-index0"))
-    print("Usage: python scripts/check_camera.py <camera path>")
-    print("Cameras found:" if found else "No camera found in /dev/v4l/by-id/.")
-    for path in found:
-        print(f"    {path}")
+    try:
+        found = list_cameras()
+    except CameraError as err:
+        sys.exit(str(err))
+    print("Usage: python scripts/check_camera.py <camera>")
+    print("Cameras found (name, then what to pass):" if found else "No camera found.")
+    for device, name in found:
+        print(f"    {name}\n        {device}")
     sys.exit(1)
 
 try:

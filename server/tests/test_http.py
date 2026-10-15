@@ -7,8 +7,11 @@ The HTTP app runs inside the test through an ASGI transport, so no port is opene
 login server is replaced by a key pair made here: the tests sign their own tokens.
 """
 
+import socket
+import ssl
 import time
 from contextlib import asynccontextmanager
+from urllib.error import URLError
 
 import httpx2
 import jwt
@@ -154,3 +157,21 @@ async def test_a_login_without_roles_may_do_nothing(login_app):
             result = await mcp.call_tool("capture_image", {})
     assert result.is_error
     assert "needs the role 'viewer'" in result.content[0].text
+
+
+def test_an_unreachable_login_server_stops_the_start_with_a_message():
+    with socket.socket() as s:   # a port that was free a moment ago: nothing listens there
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    with pytest.raises(SystemExit) as stop:
+        oauth_auth(f"http://127.0.0.1:{port}/realms/inspection", URL)
+    assert "Is the login server running" in str(stop.value.code)
+
+
+def test_an_untrusted_login_server_certificate_is_named_in_the_message(monkeypatch):
+    def untrusted(url, timeout):
+        raise URLError(ssl.SSLCertVerificationError("certificate verify failed"))
+    monkeypatch.setattr("inspection_camera.server.urlopen", untrusted)
+    with pytest.raises(SystemExit) as stop:
+        oauth_auth("https://localhost:8443/realms/inspection", URL)
+    assert "Set SSL_CERT_FILE" in str(stop.value.code)

@@ -10,8 +10,9 @@ decide which tools its user may call.
                                       # over the network, at http(s)://<host>:<port>/mcp
 
 Environment:
-    CAMERA       "fake" (default) or the path of a V4L2 camera, such as
-                 /dev/v4l/by-id/usb-046d_0825_<serial>-video-index0
+    CAMERA       "fake" (default) or a real camera, as scripts/check_camera.py lists them:
+                 on Linux its path, such as /dev/v4l/by-id/usb-046d_0825_<serial>-video-index0;
+                 on Windows (not tested yet) its name or device path
     SAMPLES_DIR  photos the fake camera serves (default: samples/)
     DATA_DIR     where photos (captures/) and logs (logs/) are kept (default: this repo)
     API_KEY      with --http: the secret key every client must send, at least 32 characters
@@ -27,6 +28,7 @@ import hmac
 import io
 import json
 import os
+import ssl
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -303,8 +305,16 @@ def oauth_auth(issuer: str, server_url: str, signing_key=None) -> dict:
     issuer = issuer.rstrip("/")
     if signing_key is None:
         # The login server publishes where its public keys are (OpenID Connect discovery).
-        with urlopen(f"{issuer}/.well-known/openid-configuration", timeout=10) as response:
-            signing_key = jwt.PyJWKClient(json.load(response)["jwks_uri"]).get_signing_key_from_jwt
+        settings = f"{issuer}/.well-known/openid-configuration"
+        try:
+            with urlopen(settings, timeout=10) as response:
+                keys = json.load(response)["jwks_uri"]
+        except (OSError, ValueError, KeyError) as err:   # unreachable, refused, not JSON
+            hint = ("Set SSL_CERT_FILE to the certificate authority that signed its certificate."
+                    if isinstance(getattr(err, "reason", err), ssl.SSLCertVerificationError)
+                    else "Is the login server running, and is OAUTH_ISSUER right?")
+            sys.exit(f"Cannot read the login server's settings at {settings} ({err}). {hint}")
+        signing_key = jwt.PyJWKClient(keys).get_signing_key_from_jwt
     # resource_server_url publishes, for clients such as Claude Code, which login server
     # to use. The verifier checks that a token was issued for this server (its audience).
     return {"auth": AuthSettings(issuer_url=issuer, resource_server_url=server_url,
@@ -344,8 +354,11 @@ def main() -> None:
     elif len(key) >= MIN_KEY_LENGTH and not issuer:
         auth = key_auth(key)
     else:
+        make_key = 'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+        example = (f"$env:API_KEY = {make_key}" if sys.platform == "win32"   # PowerShell
+                   else f'export API_KEY="$({make_key})"')
         sys.exit(f"Set either API_KEY, to a secret of at least {MIN_KEY_LENGTH} characters, e.g.\n"
-                 '    export API_KEY="$(python -c "import secrets; print(secrets.token_urlsafe(32))")"\n'
+                 f"    {example}\n"
                  "or OAUTH_ISSUER and SERVER_URL, for logins.")
     app = create_server(camera, data_dir, **auth).streamable_http_app(host=args.host)
     uvicorn.run(app, host=args.host, port=args.port,

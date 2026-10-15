@@ -7,13 +7,14 @@ name = "mcp-inspection-camera"
 version = "0.1.0"
 description = "An MCP server that lets an AI application take photos with a camera and record inspection results"
 license = "MIT"
-requires-python = ">=3.11"
+requires-python = ">=3.14"   # the version tested, on Linux and Windows
 dependencies = [
     "mcp[cli]==2.3.0",
     "pyjwt[crypto]",
     "uvicorn",
     "opencv-python-headless",
     "pillow",
+    "cv2-enumerate-cameras==1.4.0; sys_platform == 'win32' or sys_platform == 'darwin'",  # lists cameras by name
 ]
 
 [project.scripts]

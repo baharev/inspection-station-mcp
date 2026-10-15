@@ -7,13 +7,14 @@ enforced in the server, not in the prompt. What it does and how to run it: `READ
 
 ## Environment
 
-- Python 3.11 or later, in a virtual environment of its own:
+- Python 3.14 (the version tested), in a virtual environment of its own:
   `pip install -e ".[test]"`, then `pytest -q`. Add a dependency to `pyproject.toml` in
   the same step as installing it. Never install into the system Python.
 - The tests and `.mcp.json` use the fake camera (`CAMERA=fake`), which serves the photos
-  in `samples/`. A real camera is a Linux V4L2 webcam, opened by its stable
-  `/dev/v4l/by-id/` path, never by a number (numbers change when devices are plugged in).
-- Containers, if ever needed: podman.
+  in `samples/`. A real camera is always chosen by name, never by a number (numbers
+  change when devices are plugged in): on Linux a V4L2 webcam by its stable
+  `/dev/v4l/by-id/` path; on Windows and macOS (not tested yet) by its name or device path.
+- Containers: podman (the demo login server, `scripts/keycloak.sh`).
 
 ## How to write the code
 
@@ -25,6 +26,9 @@ enforced in the server, not in the prompt. What it does and how to run it: `READ
 - Protocol version 2026-07-28 is stateless: no handshake, no session. State that must
   survive between calls is an explicit handle passed as a tool argument (the photo ID).
 - Never `print()` in a stdio server: stdout carries the protocol. Log to a file.
+- Over HTTP, every request needs the secret key or a login token (the SDK's
+  `TokenVerifier`); roles come from the token's `roles` claim and are checked in each
+  tool. Claude Code sends login details only over HTTPS or to `localhost`.
 - Every rule lives in the server: inputs validated, limits in code, a human confirms
   anything with consequences, everything audit-logged. Tool annotations are hints for the
   host, not protection.
