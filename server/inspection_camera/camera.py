@@ -23,7 +23,9 @@ def _enumerate():
         raise CameraError("Real cameras work on Linux, Windows and macOS only; use CAMERA=fake here.")
     import cv2
     from cv2_enumerate_cameras import enumerate_cameras
-    return enumerate_cameras(cv2.CAP_MSMF if sys.platform == "win32" else cv2.CAP_AVFOUNDATION)
+    # Windows: DirectShow. The OpenCV wheels for Windows (4.14, 5.0) leave out Media
+    # Foundation: cameras are listed through it, but OpenCV cannot open them with it.
+    return enumerate_cameras(cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_AVFOUNDATION)
 
 
 def list_cameras() -> list[tuple[str, str]]:
@@ -58,7 +60,7 @@ def _linux_name(path: Path) -> str:
 class RealCamera:
     """A webcam, always chosen by name, never by a number (numbers change when devices
     are plugged in). Linux: a V4L2 camera by its stable /dev/v4l/by-id/ path. Windows and
-    macOS (not tested yet): by its name or device path (macOS: its unique ID), as
+    macOS (macOS not tested yet): by its name or device path (macOS: its unique ID), as
     list_cameras() shows them.
 
     Only one program at a time can read a camera, so this object alone owns it: on first
@@ -88,11 +90,24 @@ class RealCamera:
             # MJPG gives garbled frames on the Logitech C270; the uncompressed format is clean.
             camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUYV"))
             return camera
+        found = self._find()
+        return cv2.VideoCapture(found.index, found.backend)
+
+    def _find(self):
+        """Windows and macOS: the one camera that CAMERA names, as listed by its system."""
         found = [c for c in _enumerate() if self.device in (c.name, c.path)]
         if len(found) != 1:
             raise CameraError(f"{len(found)} cameras match {self.device!r}; set CAMERA to exactly "
                               "one, as scripts/check_camera.py lists them.")
-        return cv2.VideoCapture(found[0].index, found[0].backend)
+        return found[0]
+
+    def check(self) -> None:
+        """Refuses a camera that is not there, without opening it (the server's start)."""
+        if sys.platform != "linux":
+            self._find()
+        elif not Path(self.device).exists():
+            raise CameraError(f"No camera at {self.device}. Is it plugged in? "
+                              "python scripts/check_camera.py lists the cameras.")
 
     def _read(self) -> None:
         """The background thread: reads frames until the camera has not been used for a while."""

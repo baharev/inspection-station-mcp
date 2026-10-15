@@ -10,6 +10,7 @@ login server is replaced by a key pair made here: the tests sign their own token
 import io
 import socket
 import ssl
+import sys
 import time
 from contextlib import asynccontextmanager
 from urllib.error import URLError
@@ -23,7 +24,7 @@ from mcp.client.streamable_http import streamable_http_client
 from PIL import Image
 
 from inspection_camera.camera import FakeCamera
-from inspection_camera.server import create_server, key_auth, oauth_auth
+from inspection_camera.server import create_server, key_auth, oauth_auth, secret_key
 
 pytestmark = pytest.mark.anyio
 
@@ -241,3 +242,36 @@ async def test_a_camera_failure_is_shown_on_the_live_page(tmp_path):
     async with http(app) as client:
         response = await client.get("http://localhost:8000/live/frame.jpg")
     assert response.status_code == 503 and "no photos" in response.text
+
+
+# --- the secret key -------------------------------------------------------------------
+
+def test_the_first_start_makes_the_key_file_and_later_starts_reuse_it(tmp_path, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    path = tmp_path / "config" / "api-key"
+    key = secret_key(path)
+    assert len(key) >= 32 and path.read_text().strip() == key
+    if sys.platform != "win32":
+        assert path.stat().st_mode & 0o777 == 0o600   # readable by this user only
+    assert secret_key(path) == key
+
+
+def test_a_key_file_written_by_hand_is_read_without_its_line_end(tmp_path, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    path = tmp_path / "api-key"
+    path.write_text("x" * 43 + "\n")
+    assert secret_key(path) == "x" * 43
+
+
+def test_api_key_wins_over_the_key_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("API_KEY", "y" * 40)
+    path = tmp_path / "api-key"
+    assert secret_key(path) == "y" * 40
+    assert not path.exists()
+
+
+def test_a_short_key_stops_the_start(tmp_path, monkeypatch):
+    monkeypatch.setenv("API_KEY", "short")
+    with pytest.raises(SystemExit) as stop:
+        secret_key(tmp_path / "api-key")
+    assert "shorter than 32 characters" in str(stop.value.code)

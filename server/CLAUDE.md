@@ -15,7 +15,7 @@ is in a repository of its own, `mcp-client`.
 - The fake camera (`CAMERA=fake`) serves the photos in `samples/`; the tests draw their
   own. A real camera is always chosen by name, never by a number (numbers change when
   devices are plugged in): on Linux a V4L2 webcam by its stable `/dev/v4l/by-id/` path;
-  on Windows and macOS (not tested yet) by its name or device path.
+  on Windows (through DirectShow) and macOS (not tested yet) by its name or device path.
   `python scripts/check_camera.py` lists the cameras.
 - The server alone opens the camera: a background thread reads frames while photos or the
   live view (`/live`, with `--http`) are used, and releases the camera a minute later.
@@ -34,7 +34,8 @@ is in a repository of its own, `mcp-client`.
 - Never `print()` in a stdio server: stdout carries the protocol. Log to a file.
 - Over HTTP, every request needs the secret key or a login token (the SDK's
   `TokenVerifier`); roles come from the token's `roles` claim and are checked in each
-  tool. Claude Code sends login details only over HTTPS or to `localhost`.
+  tool. The key is in `~/.config/inspection-camera/api-key` (made by the server at its
+  first start; Claude Code reads the same file) unless `API_KEY` is set. Claude Code sends login details only over HTTPS or to `localhost`.
 - Every rule lives in the server: inputs validated, limits in code, a human confirms
   anything with consequences, everything audit-logged. Tool annotations are hints for the
   host, not protection.

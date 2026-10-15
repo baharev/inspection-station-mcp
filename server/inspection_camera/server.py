@@ -17,11 +17,13 @@ camera, so watching the live view never stops a photo from being taken.
 Environment:
     CAMERA       "fake" (default) or a real camera, as scripts/check_camera.py lists them:
                  on Linux its path, such as /dev/v4l/by-id/usb-046d_0825_<serial>-video-index0;
-                 on Windows (not tested yet) its name or device path
+                 on Windows and macOS (macOS not tested yet) its name or device path
     SAMPLES_DIR  photos the fake camera serves (default: samples/)
     DATA_DIR     where photos (captures/) and logs (logs/) are kept (default: this repo)
-    API_KEY      with --http: the secret key every client must send, at least 32 characters
-    OAUTH_ISSUER with --http, instead of API_KEY: the login server (OAuth authorization
+    API_KEY      with --http: the secret key every client must send, at least 32 characters;
+                 if not set, the key in ~/.config/inspection-camera/api-key, which the
+                 server makes on its first start (copy it to wherever Claude Code runs)
+    OAUTH_ISSUER with --http, instead of a key: the login server (OAuth authorization
                  server) whose tokens are accepted, e.g. http://localhost:8080/realms/inspection
     SERVER_URL   with OAUTH_ISSUER: this server's address as clients use it, e.g.
                  http://localhost:8000/mcp; tokens must be issued for it
@@ -34,6 +36,7 @@ import io
 import json
 import logging
 import os
+import secrets
 import ssl
 import sys
 import time
@@ -67,7 +70,8 @@ MAX_PHOTO = (1280, 720)   # longest photo the AI is sent, in pixels
 ZOOM_SIZE = 1024          # longer side of an enlarged crop, in pixels
 MIN_ZOOM = 0.1            # smallest crop, as a fraction of the photo's width or height
 MAX_FINDINGS = 500        # characters
-MIN_KEY_LENGTH = 32       # characters of API_KEY
+MIN_KEY_LENGTH = 32       # characters of the secret key
+KEY_FILE = Path.home() / ".config" / "inspection-camera" / "api-key"
 LIVE_GAP = 60             # seconds without a frame after which a live viewer is logged again
 
 # Who may call which tool. Logins carry their roles in the token's "roles" claim; the
@@ -350,6 +354,32 @@ def key_auth(key: str) -> dict:
             "token_verifier": ApiKeyVerifier(key)}
 
 
+def secret_key(path: Path = KEY_FILE) -> str:
+    """The secret key: API_KEY if set, else the key in the key file, made there if missing.
+
+    With the key in a file, the server and Claude Code read the same key, also on two
+    computers (copy the file), and nobody has to type it.
+    """
+    if key := os.environ.get("API_KEY", "").strip():
+        where = "API_KEY"
+    else:
+        where = str(path)
+        if not path.exists():
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                # Readable by this user only (Linux and macOS):
+                with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+                    f.write(secrets.token_urlsafe(32) + "\n")
+            except OSError as err:
+                sys.exit(f"Cannot make the key file {path} ({err}). Set API_KEY instead.")
+            where += " (made now)"
+        key = path.read_text(encoding="utf-8").strip()
+    if len(key) < MIN_KEY_LENGTH:
+        sys.exit(f"The secret key in {where} is shorter than {MIN_KEY_LENGTH} characters.")
+    print(f"Secret key: {where}", file=sys.stderr)
+    return key
+
+
 def oauth_auth(issuer: str, server_url: str, signing_key=None) -> dict:
     """Settings for create_server: every request must carry a token from the login server.
 
@@ -379,8 +409,9 @@ def oauth_auth(issuer: str, server_url: str, signing_key=None) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="The inspection station as an MCP server.")
     parser.add_argument("--http", action="store_true",
-                        help="serve over the network instead of stdio; "
-                             "needs API_KEY or OAUTH_ISSUER and SERVER_URL")
+                        help="serve over the network instead of stdio, with the secret key "
+                             f"in {KEY_FILE} (made if missing) or API_KEY, or with logins "
+                             "(OAUTH_ISSUER and SERVER_URL)")
     parser.add_argument("--host", default="127.0.0.1",
                         help="address to listen on (default: this computer only; "
                              "0.0.0.0: every network it is on)")
@@ -394,26 +425,24 @@ def main() -> None:
         camera = FakeCamera(os.environ.get("SAMPLES_DIR", REPO / "samples"))
     else:
         camera = RealCamera(device)
+        try:
+            camera.check()   # now, not at the first photo, so whoever starts it sees why
+        except CameraError as err:
+            sys.exit(str(err))
     data_dir = os.environ.get("DATA_DIR", REPO)
 
     if not args.http:
         create_server(camera, data_dir).run()
         return
-    key, issuer = os.environ.get("API_KEY", ""), os.environ.get("OAUTH_ISSUER", "")
-    if issuer and not key:
+    if issuer := os.environ.get("OAUTH_ISSUER", ""):
+        if os.environ.get("API_KEY"):
+            sys.exit("Set either API_KEY or OAUTH_ISSUER, not both.")
         server_url = os.environ.get("SERVER_URL") or sys.exit(
             "Set SERVER_URL to this server's address as clients use it, "
             f"e.g. http://localhost:{args.port}/mcp")
         auth = oauth_auth(issuer, server_url)
-    elif len(key) >= MIN_KEY_LENGTH and not issuer:
-        auth = key_auth(key)
     else:
-        make_key = 'python -c "import secrets; print(secrets.token_urlsafe(32))"'
-        example = (f"$env:API_KEY = {make_key}" if sys.platform == "win32"   # PowerShell
-                   else f'export API_KEY="$({make_key})"')
-        sys.exit(f"Set either API_KEY, to a secret of at least {MIN_KEY_LENGTH} characters, e.g.\n"
-                 f"    {example}\n"
-                 "or OAUTH_ISSUER and SERVER_URL, for logins.")
+        auth = key_auth(secret_key())
     app = create_server(camera, data_dir, **auth).streamable_http_app(host=args.host)
     scheme = "https" if args.tls_cert else "http"
     listens_here = args.host in ("127.0.0.1", "localhost", "::1", "0.0.0.0", "::")
