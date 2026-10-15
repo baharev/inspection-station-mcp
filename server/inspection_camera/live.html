@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inspection camera: live view</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #111; color: #ddd; font: 15px/1.4 system-ui, sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 12px 16px; }
+  img { display: block; width: 100%; height: auto; background: #222; }
+  img:not([src]) { display: none; }
+  p { margin: 8px 0; }
+  form[hidden] { display: none; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+  input { flex: 1 1 20em; padding: 6px 8px; font: inherit; }
+  button { padding: 6px 14px; font: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <img id="view" alt="What the inspection camera sees now">
+  <p id="status">Connecting...</p>
+  <form id="login" hidden>
+    <input id="key" type="password" autocomplete="off"
+           placeholder="The server's secret key, or a login token">
+    <button>Show</button>
+  </form>
+</main>
+<script>
+// Asks the server for the latest frame, about five times a second, while this tab is
+// visible. On the camera's own computer (opened as http://localhost:...) no key is
+// needed; from other computers, the key or a login token, kept only until the tab closes.
+const view = document.getElementById("view");
+const statusLine = document.getElementById("status");
+const login = document.getElementById("login");
+const PERIOD = 200;   // milliseconds between frames
+let key = "";
+try { key = sessionStorage.getItem("key") || ""; } catch (e) {}
+let running = false, live = false, frames = 0, since = performance.now();
+
+async function next() {
+  if (document.hidden) {
+    live = running = false;
+    statusLine.textContent = "Paused while this tab is hidden.";
+    return;
+  }
+  const start = performance.now();
+  let wait = PERIOD;
+  try {
+    const response = await fetch("/live/frame.jpg",
+      { cache: "no-store", headers: key ? { Authorization: "Bearer " + key } : {} });
+    if (response.ok) {
+      const old = view.src;
+      view.src = URL.createObjectURL(await response.blob());
+      if (old) URL.revokeObjectURL(old);
+      frames += 1;
+      const seconds = (performance.now() - since) / 1000;
+      if (!live || seconds >= 2) {
+        statusLine.textContent = live ? `Live: ${(frames / seconds).toFixed(1)} frames a second.` : "Live.";
+        live = true; frames = 0; since = performance.now();
+      }
+    } else if (response.status === 401 || response.status === 403) {
+      statusLine.textContent = response.status === 403 ? await response.text()
+        : key ? "Wrong key, or the token has expired."
+        : "From another computer, the live view needs the server's secret key or a login token.";
+      login.hidden = false;
+      live = running = false;
+      return;
+    } else {
+      statusLine.textContent = await response.text();   // e.g. the camera does not open
+      live = false; wait = 2000;
+    }
+  } catch (e) {
+    statusLine.textContent = "The server does not answer.";
+    live = false; wait = 2000;
+  }
+  setTimeout(next, Math.max(0, wait - (performance.now() - start)));
+}
+
+function run() {
+  if (running || document.hidden) return;
+  running = true;
+  statusLine.textContent = "Connecting...";
+  next();
+}
+
+login.addEventListener("submit", event => {
+  event.preventDefault();
+  key = document.getElementById("key").value.trim();
+  try { sessionStorage.setItem("key", key); } catch (e) {}
+  login.hidden = true;
+  run();
+});
+document.addEventListener("visibilitychange", run);
+run();
+</script>
+</body>
+</html>

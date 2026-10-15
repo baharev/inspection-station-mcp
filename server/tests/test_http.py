@@ -1,5 +1,5 @@
-"""Tests for the server over HTTP, with a secret key and with logins: in-process, no
-network, no hardware, no login server.
+"""Tests for the server over HTTP, with a secret key and with logins, and for the live
+view: in-process, no network, no hardware, no login server.
 
     pytest -q
 
@@ -7,6 +7,7 @@ The HTTP app runs inside the test through an ASGI transport, so no port is opene
 login server is replaced by a key pair made here: the tests sign their own tokens.
 """
 
+import io
 import socket
 import ssl
 import time
@@ -28,6 +29,8 @@ pytestmark = pytest.mark.anyio
 
 KEY = "k" * 32
 URL = "http://127.0.0.1:8000/mcp"   # the port is never opened
+THIS_COMPUTER = ("127.0.0.1", 50000)   # where a request comes from
+ELSEWHERE = ("192.0.2.5", 50000)
 
 
 @pytest.fixture
@@ -71,12 +74,12 @@ def audit_lines(tmp_path):
 
 
 @asynccontextmanager
-async def http(app, headers=None):
+async def http(app, headers=None, client=THIS_COMPUTER):
     """An HTTP client talking to the app in-process, with the app's startup and shutdown."""
     async with app.router.lifespan_context(app):
-        async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app),
-                                      headers=headers) as client:
-            yield client
+        async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app, client=client),
+                                      headers=headers) as http_client:
+            yield http_client
 
 
 @pytest.mark.parametrize("headers", [None, {"Authorization": "Bearer wrong"},
@@ -175,3 +178,66 @@ def test_an_untrusted_login_server_certificate_is_named_in_the_message(monkeypat
     with pytest.raises(SystemExit) as stop:
         oauth_auth("https://localhost:8443/realms/inspection", URL)
     assert "Set SSL_CERT_FILE" in str(stop.value.code)
+
+
+# --- the live view --------------------------------------------------------------------
+
+LIVE = "http://192.0.2.2:8000/live/frame.jpg"   # as other computers address the server
+
+
+async def test_the_live_page_is_served_to_anyone(app):
+    async with http(app, client=ELSEWHERE) as client:
+        response = await client.get("http://192.0.2.2:8000/live")
+    assert response.status_code == 200
+    assert "/live/frame.jpg" in response.text   # the page fetches the frames, with the key
+
+
+async def test_this_computer_sees_the_live_view_without_a_key(app, tmp_path):
+    async with http(app) as client:
+        for name in ("localhost", "127.0.0.1", "[::1]"):
+            response = await client.get(f"http://{name}:8000/live/frame.jpg")
+            assert response.status_code == 200
+            assert response.headers["content-type"] == "image/jpeg"
+    assert Image.open(io.BytesIO(response.content)).size == (640, 480)
+    # Logged once, not for every frame:
+    assert [line.split(" ", 1)[1] for line in audit_lines(tmp_path)] == ["local live view opened"]
+
+
+@pytest.mark.parametrize("headers", [None, {"Authorization": "Bearer wrong"}])
+async def test_other_computers_need_the_key_for_the_live_view(app, headers):
+    async with http(app, headers, client=ELSEWHERE) as client:
+        response = await client.get(LIVE)
+    assert response.status_code == 401
+
+
+async def test_other_computers_see_the_live_view_with_the_key(app, tmp_path):
+    async with http(app, {"Authorization": f"Bearer {KEY}"}, client=ELSEWHERE) as client:
+        response = await client.get(LIVE)
+    assert response.status_code == 200
+    assert "api-key live view opened" in audit_lines(tmp_path)[0]
+
+
+async def test_a_web_page_cannot_reach_the_live_view_under_its_own_name(app):
+    # DNS rebinding: a web site points its own name at this computer, and the browser
+    # here calls the server under that name. The server sees the name and refuses.
+    async with http(app) as client:
+        response = await client.get("http://camera-thief.example:8000/live/frame.jpg")
+    assert response.status_code == 401
+
+
+async def test_a_login_needs_the_viewer_role_for_the_live_view(login_app, tmp_path):
+    async with http(login_app, client=ELSEWHERE) as client:
+        viewer = await client.get(LIVE, headers=token("viewer", roles=["viewer"]))
+        guest = await client.get(LIVE, headers=token("guest", roles=[]))
+    assert viewer.status_code == 200
+    assert guest.status_code == 403 and "needs the role 'viewer'" in guest.text
+    assert "guest REFUSED live view: needs the role viewer" in audit_lines(tmp_path)[-1]
+
+
+async def test_a_camera_failure_is_shown_on_the_live_page(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    app = create_server(FakeCamera(empty), tmp_path / "data", **key_auth(KEY)).streamable_http_app()
+    async with http(app) as client:
+        response = await client.get("http://localhost:8000/live/frame.jpg")
+    assert response.status_code == 503 and "no photos" in response.text

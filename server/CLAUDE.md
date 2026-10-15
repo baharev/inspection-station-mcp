@@ -17,6 +17,9 @@ is in a repository of its own, `mcp-client`.
   devices are plugged in): on Linux a V4L2 webcam by its stable `/dev/v4l/by-id/` path;
   on Windows and macOS (not tested yet) by its name or device path.
   `python scripts/check_camera.py` lists the cameras.
+- The server alone opens the camera: a background thread reads frames while photos or the
+  live view (`/live`, with `--http`) are used, and releases the camera a minute later.
+  Meanwhile no other program can open it; the live view replaces separate camera viewers.
 - Containers: podman (the demo login server, `scripts/keycloak.sh`).
 
 ## How to write the code

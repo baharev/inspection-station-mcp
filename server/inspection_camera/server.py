@@ -9,6 +9,11 @@ decide which tools its user may call.
     inspection-camera --http [--host 0.0.0.0] [--port 8000] [--tls-cert C --tls-key K]
                                       # over the network, at http(s)://<host>:<port>/mcp
 
+With --http, a browser shows what the camera sees at http(s)://<host>:<port>/live: on
+the camera's own computer at http://localhost:<port>/live without a key, from other
+computers with the key or a login token (role viewer). The server alone opens the
+camera, so watching the live view never stops a photo from being taken.
+
 Environment:
     CAMERA       "fake" (default) or a real camera, as scripts/check_camera.py lists them:
                  on Linux its path, such as /dev/v4l/by-id/usb-046d_0825_<serial>-video-index0;
@@ -27,12 +32,15 @@ import asyncio
 import hmac
 import io
 import json
+import logging
 import os
 import ssl
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 import jwt
@@ -47,16 +55,20 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from PIL import Image as PILImage
 from pydantic import BaseModel, Field
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, PlainTextResponse, Response
 
 from inspection_camera.camera import CameraError, FakeCamera, RealCamera
 
 REPO = Path(__file__).resolve().parent.parent
+LIVE_PAGE = Path(__file__).resolve().parent / "live.html"
 
 MAX_PHOTO = (1280, 720)   # longest photo the AI is sent, in pixels
 ZOOM_SIZE = 1024          # longer side of an enlarged crop, in pixels
 MIN_ZOOM = 0.1            # smallest crop, as a fraction of the photo's width or height
 MAX_FINDINGS = 500        # characters
 MIN_KEY_LENGTH = 32       # characters of API_KEY
+LIVE_GAP = 60             # seconds without a frame after which a live viewer is logged again
 
 # Who may call which tool. Logins carry their roles in the token's "roles" claim; the
 # person at this computer (stdio) and the holder of the secret key may call everything.
@@ -84,6 +96,18 @@ class InspectionRecord(BaseModel):
     recorded_by: str = Field(description="Who recorded it: a login's user name, "
                                          "'api-key' or 'local'")
     note: str = ""
+
+
+def from_this_computer(request: Request) -> bool:
+    """True for a request from this computer that also addresses it by a local name.
+
+    The name (the Host header) keeps out web pages that make a browser here call this
+    server under a name of their own (DNS rebinding). An SSH tunnel into this computer
+    counts as this computer; so would a proxy running here, so put none in front.
+    """
+    name = urlsplit("//" + request.headers.get("host", "")).hostname
+    return (request.client is not None and request.client.host in ("127.0.0.1", "::1")
+            and name in ("localhost", "127.0.0.1", "::1"))
 
 
 class ApiKeyVerifier:
@@ -239,6 +263,36 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
                 f"down, enlarged {scale:.1f} times",
                 Image(data=as_jpeg(crop), format="jpeg")]
 
+    # The live view: a page (no secrets in it) that keeps asking for the latest frame.
+    # With --http only; the tools above are the only way in over stdio.
+    @mcp.custom_route("/live", methods=["GET"])
+    async def live_page(request: Request) -> Response:
+        return HTMLResponse(LIVE_PAGE.read_text(encoding="utf-8"))
+
+    watching = {}   # viewer name: when they last got a frame
+
+    @mcp.custom_route("/live/frame.jpg", methods=["GET"])
+    async def live_frame(request: Request) -> Response:
+        # The SDK checks the key or token of every request, but refuses missing ones only
+        # at /mcp. Here: none is needed from this computer, one is from any other.
+        if get_access_token() is None and not from_this_computer(request):
+            return PlainTextResponse("Send the secret key or a login token.", 401,
+                                     headers={"WWW-Authenticate": "Bearer"})
+        name, roles = caller()
+        if VIEWER not in roles:
+            audit(f"REFUSED live view: needs the role {VIEWER}")
+            return PlainTextResponse(f"{name} may not use the live view: "
+                                     f"it needs the role '{VIEWER}'.", 403)
+        last = watching.get(name)
+        if last is None or time.monotonic() - last >= LIVE_GAP:
+            audit("live view opened")
+        watching[name] = time.monotonic()
+        try:
+            data = await asyncio.to_thread(lambda: as_jpeg(camera.view()))
+        except CameraError as err:
+            return PlainTextResponse(str(err), 503)
+        return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
     def confirm_fail(image_id: str, part_id: str, verdict: str, findings: str):
         # Runs before the tool body. Only a fail asks the human, and only for a valid record.
         if verdict != "fail":
@@ -361,6 +415,13 @@ def main() -> None:
                  f"    {example}\n"
                  "or OAUTH_ISSUER and SERVER_URL, for logins.")
     app = create_server(camera, data_dir, **auth).streamable_http_app(host=args.host)
+    scheme = "https" if args.tls_cert else "http"
+    listens_here = args.host in ("127.0.0.1", "localhost", "::1", "0.0.0.0", "::")
+    print(f"Live view: {scheme}://{'localhost' if listens_here else args.host}:{args.port}/live",
+          file=sys.stderr)
+    # The live view asks for a frame five times a second; keep those out of the terminal.
+    logging.getLogger("uvicorn.access").addFilter(
+        lambda record: "/live/frame.jpg" not in record.getMessage())
     uvicorn.run(app, host=args.host, port=args.port,
                 ssl_certfile=args.tls_cert, ssl_keyfile=args.tls_key)
 

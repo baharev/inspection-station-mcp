@@ -25,6 +25,7 @@ test = ["pytest", "anyio"]
 
 [tool.setuptools]
 packages = ["inspection_camera"]
+package-data = { inspection_camera = ["live.html"] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -6,6 +6,10 @@
 Windows and macOS its name or device path. Without an argument it lists the cameras
 found, with their names (on Linux also whether each is built in or plugged in). The
 photo is real: look at it before sharing it anywhere (captures/ is git-ignored).
+
+A running server holds its camera while it is used and for a minute after; meanwhile
+this script cannot open it. To see the camera while the server runs, use the server's
+live view (/live) instead.
 """
 
 import sys
