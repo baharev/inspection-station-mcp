@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "inspection-camera": {
+      "type": "stdio",
+      "command": "inspection-camera",
+      "env": { "CAMERA": "fake" }
+    }
+  }
+}

@@ -1,19 +1,22 @@
-# MCP inspection camera
+# MCP inspection camera: the server
 
 An MCP server (Model Context Protocol, the standard way to plug tools, data and devices
 into an AI application such as Claude Code) that lets the AI take photos with a camera,
 look closer at part of a photo, and record inspection results. The safety rules are
-enforced in the server, not in the prompt. What it does and how to run it: `README.md`.
+enforced in the server, not in the prompt. This repository holds the server, with its
+demo login server and a script for HTTPS certificates; how Claude Code connects to it
+is in a repository of its own, `mcp-client`.
 
 ## Environment
 
 - Python 3.14 (the version tested), in a virtual environment of its own:
   `pip install -e ".[test]"`, then `pytest -q`. Add a dependency to `pyproject.toml` in
   the same step as installing it. Never install into the system Python.
-- The tests and `.mcp.json` use the fake camera (`CAMERA=fake`), which serves the photos
-  in `samples/`. A real camera is always chosen by name, never by a number (numbers
-  change when devices are plugged in): on Linux a V4L2 webcam by its stable
-  `/dev/v4l/by-id/` path; on Windows and macOS (not tested yet) by its name or device path.
+- The fake camera (`CAMERA=fake`) serves the photos in `samples/`; the tests draw their
+  own. A real camera is always chosen by name, never by a number (numbers change when
+  devices are plugged in): on Linux a V4L2 webcam by its stable `/dev/v4l/by-id/` path;
+  on Windows and macOS (not tested yet) by its name or device path.
+  `python scripts/check_camera.py` lists the cameras.
 - Containers: podman (the demo login server, `scripts/keycloak.sh`).
 
 ## How to write the code
