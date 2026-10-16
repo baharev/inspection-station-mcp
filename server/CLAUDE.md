@@ -9,7 +9,8 @@ is in a repository of its own, `mcp-client`.
 
 ## Environment
 
-- Python 3.14 (the version tested), in a virtual environment of its own:
+- Python 3.13 or later (3.14 is the version tested; the tests also pass on 3.13), in a
+  virtual environment of its own:
   `pip install -e ".[test]"`, then `pytest -q`. Add a dependency to `pyproject.toml` in
   the same step as installing it. Never install into the system Python.
 - The fake camera (`CAMERA=fake`) serves the photos in `samples/`; the tests draw their

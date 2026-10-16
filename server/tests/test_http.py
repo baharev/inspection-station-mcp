@@ -204,6 +204,16 @@ async def test_this_computer_sees_the_live_view_without_a_key(app, tmp_path):
     assert [line.split(" ", 1)[1] for line in audit_lines(tmp_path)] == ["local live view opened"]
 
 
+async def test_a_refused_token_is_refused_on_this_computer_too(login_app, tmp_path):
+    # An app here that sends a token is that login, not the person at this computer: an
+    # expired token must not turn it into "local".
+    async with http(login_app) as client:
+        response = await client.get("http://localhost:8000/live/frame.jpg",
+                                    headers=token("viewer", exp=int(time.time()) - 10))
+    assert response.status_code == 401
+    assert not (tmp_path / "data" / "logs" / "audit.log").exists()
+
+
 @pytest.mark.parametrize("headers", [None, {"Authorization": "Bearer wrong"}])
 async def test_other_computers_need_the_key_for_the_live_view(app, headers):
     async with http(app, headers, client=ELSEWHERE) as client:

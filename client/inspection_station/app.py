@@ -1,35 +1,38 @@
 """The window: the camera's live view on the left, the conversation with Claude on the right.
 
-    inspection-station [--server http://<station computer>:8000/mcp]
+    inspection-station [--server http://<station computer>:8000/mcp] [--login] [--trust ca.pem]
 
 The camera server must be running with --http. Keys are read from files, never typed:
 the camera server's key from ~/.config/inspection-camera/api-key (or API_KEY), Claude's
-from ~/.config/anthropic/api-key (or ANTHROPIC_API_KEY).
+from ~/.config/anthropic/api-key (or ANTHROPIC_API_KEY). With --login, the person logs
+in through the camera server's login server in the browser instead, and the camera
+server's key is not needed.
 """
 
 import argparse
 import asyncio
 import html
 import json
+import ssl
 import sys
 import threading
 import time
 from urllib.parse import urlsplit, urlunsplit
 
 import anthropic
-from PySide6.QtCore import QByteArray, QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QImage, QPixmap, QTextBlockFormat, QTextCharFormat, QTextCursor,
                            QTextDocument)
-from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout,
                                QLabel, QLineEdit, QMainWindow, QPushButton, QScrollArea,
                                QSplitter, QTextBrowser, QVBoxLayout, QWidget)
 
-from .station import (CAMERA_KEY_FILE, CLAUDE_KEY_FILE, MODELS, Answer, Done, Note, Question,
-                      Station, ToolCall, ToolResult, camera_client, describe, read_key)
+from .login import BrowserLogin
+from .station import (CAMERA_KEY_FILE, CLAUDE_KEY_FILE, MODELS, Answer, Done, KeyAuth, Note,
+                      Question, Station, ToolCall, ToolResult, camera_client, describe,
+                      live_view, read_key)
 
 THUMBNAIL = 240      # width of a picture in the conversation, in pixels
-LIVE_GAP = 150       # pause between two live frames, in milliseconds
 
 
 class Worker(QObject):
@@ -40,11 +43,15 @@ class Worker(QObject):
 
     step = Signal(object)
     connected = Signal(str)
+    note = Signal(str)                 # about the login, for the conversation
     confirm = Signal(object, object)   # the question, and the function that takes the answer
+    frame = Signal(bytes)              # the live view's newest frame (JPEG)
+    no_frame = Signal(str)             # why there is none
 
-    def __init__(self, station: Station):
+    def __init__(self, station: Station, who=lambda: ""):
         super().__init__()
         self.station = station
+        self.who = who   # the user logged in, if any
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
 
@@ -55,10 +62,15 @@ class Worker(QObject):
         async def check():
             try:
                 tools = await self.station.check()
-                self.connected.emit(f"Connected. The server's tools: {tools}")
+                user = f" as {self.who()}" if self.who() else ""
+                self.connected.emit(f"Connected{user}. The server's tools: {tools}")
             except Exception as err:
                 self.connected.emit(describe(err))
         self.run(check())
+
+    def watch(self, live) -> None:
+        """Starts the live view: live(show, tell) runs as long as the app."""
+        self.run(live(self.frame.emit, self.no_frame.emit))
 
     def ask(self, question: str, model: str) -> None:
         self.run(self.station.ask(question, model, self.step.emit, self.ask_person))
@@ -71,36 +83,23 @@ class Worker(QObject):
 
 
 class LiveView(QLabel):
-    """What the camera sees right now: asks the server for a new frame as soon as one arrives."""
+    """What the camera sees right now; the worker brings each new frame."""
 
-    def __init__(self, url: str, key: str):
+    def __init__(self):
         super().__init__("Waiting for the camera…")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(320, 180)
         self.setStyleSheet("background: #222; color: #ccc;")
         self.frame = None
-        self.request = QNetworkRequest(QUrl(url))
-        self.request.setRawHeader(b"Authorization", f"Bearer {key}".encode())
-        self.network = QNetworkAccessManager(self)
-        self.network.finished.connect(self.arrived)
-        QTimer.singleShot(0, self.fetch)
 
-    def fetch(self) -> None:
-        self.network.get(self.request)
+    def show_jpeg(self, data: bytes) -> None:
+        self.frame = QPixmap()
+        self.frame.loadFromData(data)
+        self.show_frame()
 
-    def arrived(self, reply: QNetworkReply) -> None:
-        data = reply.readAll()
-        if reply.error() == QNetworkReply.NetworkError.NoError:
-            self.frame = QPixmap()
-            self.frame.loadFromData(data)
-            self.show_frame()
-            QTimer.singleShot(LIVE_GAP, self.fetch)
-        else:
-            self.frame = None
-            text = bytes(data).decode(errors="replace").strip() or reply.errorString()
-            self.setText(f"No live view: {text}\n(trying again)")
-            QTimer.singleShot(2000, self.fetch)
-        reply.deleteLater()
+    def show_problem(self, text: str) -> None:
+        self.frame = None
+        self.setText(f"No live view: {text}\n(trying again)")
 
     def show_frame(self) -> None:
         if self.frame and not self.frame.isNull():
@@ -149,9 +148,15 @@ class ConfirmDialog(QDialog):
                                                    Qt.TransformationMode.SmoothTransformation))
             layout.addWidget(picture)
         buttons = QDialogButtonBox()
-        buttons.addButton("Yes, mark it as failed", QDialogButtonBox.ButtonRole.YesRole)
+        yes = buttons.addButton("Yes, mark it as failed", QDialogButtonBox.ButtonRole.YesRole)
         no = buttons.addButton("No, put it aside", QDialogButtonBox.ButtonRole.NoRole)
-        no.setDefault(True)   # Enter never scraps a part by accident
+        # Enter never scraps a part by accident: "No" stays the default wherever the
+        # keyboard focus is (Qt otherwise moves the default along with the focus), and
+        # it gets the focus once the dialog shows.
+        for button in yes, no:
+            button.setAutoDefault(False)
+        no.setDefault(True)
+        QTimer.singleShot(0, no.setFocus)
         buttons.clicked.connect(lambda button: self.done(1 if button is not no else 2))
         layout.addWidget(buttons)
 
@@ -182,7 +187,7 @@ def in_words(call: ToolCall) -> str:
 
 
 class Window(QMainWindow):
-    def __init__(self, worker: Worker, server_url: str, live_url: str, camera_key: str):
+    def __init__(self, worker: Worker, server_url: str, live):
         super().__init__()
         self.worker = worker
         self.server_url = server_url
@@ -221,8 +226,9 @@ class Window(QMainWindow):
         column.addLayout(asking)
         column.addLayout(below)
 
+        live_view = LiveView()
         splitter = QSplitter()
-        splitter.addWidget(LiveView(live_url, camera_key))
+        splitter.addWidget(live_view)
         splitter.addWidget(right)
         splitter.setSizes([700, 600])
         self.setCentralWidget(splitter)
@@ -235,8 +241,12 @@ class Window(QMainWindow):
 
         worker.connected.connect(lambda text: self.status.setText(f"{server_url}: {text}"))
         worker.step.connect(self.show_step)
+        worker.note.connect(lambda text: self.add(f"<p style='color:#777'>{html.escape(text)}</p>"))
         worker.confirm.connect(self.confirm)
+        worker.frame.connect(live_view.show_jpeg)
+        worker.no_frame.connect(live_view.show_problem)
         worker.check()
+        worker.watch(live)
 
     # --- asking -------------------------------------------------------------------
 
@@ -287,8 +297,9 @@ class Window(QMainWindow):
                          f"<span style='color:#999; font-size:small'>{step.name} "
                          f"{html.escape(json.dumps(step.arguments))}</span></p>")
             case ToolResult(refused=True):
+                reason = step.text.removeprefix(f"Error executing tool {step.name}: ")
                 self.add(f"<p style='color:#c22'>Refused by the server: "
-                         f"{html.escape(step.text)}</p>")
+                         f"{html.escape(reason)}</p>")
             case ToolResult():
                 self.add(f"<p style='color:#555; font-size:small'>{result_in_words(step)}</p>")
                 if step.pictures:
@@ -370,15 +381,34 @@ def main() -> None:
                                      "answers questions with the camera server's tools.")
     parser.add_argument("--server", default="http://localhost:8000/mcp",
                         help="the camera server's address (default: %(default)s)")
+    parser.add_argument("--login", action="store_true",
+                        help="log in through the camera server's login server, in the "
+                             "browser, instead of sending the camera server's key")
+    parser.add_argument("--trust", metavar="CA_FILE",
+                        help="for HTTPS with private certificates: also trust the certificate "
+                             "authority in this file, such as the demo's certs/ca.pem")
     args = parser.parse_args()
 
-    camera_key = read_key("API_KEY", CAMERA_KEY_FILE)
+    verify = True
+    if args.trust:
+        verify = ssl.create_default_context()
+        try:
+            verify.load_verify_locations(args.trust)
+        except (OSError, ssl.SSLError) as err:
+            sys.exit(f"Cannot read the certificate authority {args.trust}: {err}")
+    login = BrowserLogin(args.server) if args.login else None
+    auth = login.auth if login else KeyAuth(read_key("API_KEY", CAMERA_KEY_FILE))
     claude = anthropic.AsyncAnthropic(api_key=read_key("ANTHROPIC_API_KEY", CLAUDE_KEY_FILE))
-    station = Station(claude, lambda confirm: camera_client(args.server, camera_key, confirm))
+    station = Station(claude, lambda confirm: camera_client(args.server, auth, confirm, verify))
+    ready = (lambda: login.logged_in) if login else (lambda: True)
+    live = lambda show, tell: live_view(live_url(args.server), auth, show, tell, verify, ready)
 
     app = QApplication(sys.argv)
     app.setApplicationName("Inspection station")
-    window = Window(Worker(station), args.server, live_url(args.server), camera_key)
+    worker = Worker(station, login.who if login else lambda: "")
+    if login:
+        login.tell = worker.note.emit
+    window = Window(worker, args.server, live)
     window.show()
     sys.exit(app.exec())
 

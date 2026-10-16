@@ -11,7 +11,7 @@ A self-built demonstration of connecting a device to AI models through the
 plug tools, data and devices into AI applications. The camera sits behind an MCP server,
 in the companion repository `mcp-server`; this repository holds the programs that use
 it: this app, and a ready-made setup for Claude Code. The app is small on purpose: about
-640 lines of Python, using the official MCP and Anthropic libraries.
+920 lines of Python, using the official MCP and Anthropic libraries.
 
 Author: [Ali Baharev](https://baharev.info/)
 
@@ -81,16 +81,17 @@ photos, so you can ask "now look closer at the left one".
 
 ## Installing
 
-Python 3.14, the version tested. The app was tested on Linux; Windows and macOS are not
-tested yet. The commands are for Linux, and should work the same in the macOS Terminal;
-for PowerShell, see [On Windows](#on-windows).
+Python 3.13 or later: tested with 3.14; the tests also pass with 3.13. The app was
+tested on Linux and Windows; macOS is not tested yet. The commands are for Linux, and
+should work the same in the macOS Terminal; for PowerShell, see
+[On Windows](#on-windows).
 
 You need both repositories, side by side in one folder, and one Python environment that
 holds them both: the camera server from `mcp-server`, and this app. There are two ways
 to make that environment; use one of them, not both:
 
-- [With a virtual environment](#with-a-virtual-environment), if Python 3.14 is
-  installed on your computer. The environment is a folder, `station-env`, next to the
+- [With a virtual environment](#with-a-virtual-environment), if Python 3.13 or later
+  is installed on your computer. The environment is a folder, `station-env`, next to the
   two repositories.
 - [With conda](#with-conda), if you use Miniconda or Anaconda, which bring their own
   Python. Conda keeps the environment in a place of its own and you call it by its name,
@@ -101,7 +102,7 @@ to make that environment; use one of them, not both:
 In a terminal, in the folder that holds both repositories:
 
 ```
-python3.14 -m venv station-env
+python3 -m venv station-env
 source station-env/bin/activate
 pip install -e "./mcp-server[test]"
 pip install -e "./mcp-client[test]"
@@ -109,10 +110,11 @@ cd mcp-client
 pytest -q
 ```
 
-The first line makes the folder `station-env`, with a Python environment in it; the
-second activates it; the rest installs the server and the app into it and runs the
-app's tests. **In every new terminal**, activate it again before starting anything, in
-the folder that holds both repositories:
+The first line makes the folder `station-env`, with a Python environment in it (if
+`python3 --version` shows a version older than 3.13, write `python3.14` or `python3.13`
+instead of `python3`); the second activates it; the rest installs the server and the app
+into it and runs the app's tests. **In every new terminal**, activate it again before
+starting anything, in the folder that holds both repositories:
 
 ```
 source station-env/bin/activate
@@ -194,6 +196,7 @@ Every terminal below needs the environment active first, the way you installed i
 |---|---|---|
 | Try it on one computer, no camera needed | The camera server with its fake camera, then the app | [Try it on one computer](#try-it-on-one-computer) |
 | The camera on one computer, the app on another | The camera server on the station computer, the app on yours | [The camera on another computer](#the-camera-on-another-computer) |
+| Each person logs in with their own name and role, instead of one shared key | A login server, the camera server with logins, then the app with `--login` | [Logins with roles](#logins-with-roles) |
 | You want Claude Code instead of this app | Claude Code, in this repository's folder | [With Claude Code instead](#with-claude-code-instead) |
 
 ## Try it on one computer
@@ -247,6 +250,79 @@ If something is wrong, the window says what: the camera server cannot be reached
 running, with `--host 0.0.0.0`, and does a firewall let port 8000 through?), it refused
 the key (the key files differ), or there is no camera server at that address.
 
+## Logins with roles
+
+Instead of one key that everyone shares, each person can log in with their own name.
+The camera server then knows who asks, writes the name into every log line and record,
+and lets each person do only what their role allows: a `viewer` may take photos, look
+closer and watch the live view; an `inspector` may also record results. The login
+happens in the browser, at a login server, which hands the app a token that the camera
+server checks. The `mcp-server` README, section "Logins with roles", explains this in
+more detail; its script `scripts/keycloak.sh` starts a demo login server
+([Keycloak](https://www.keycloak.org/), in a container; needs [podman](https://podman.io/))
+with two users: `inspector` (password `inspector`) and `viewer` (password `viewer`).
+This app is registered there in advance as `inspection-station`, the way an
+administrator registers each application that may connect.
+
+On one computer, in three terminals. In the first, in the folder `mcp-server`, start the
+login server:
+
+```
+scripts/keycloak.sh
+```
+
+It is ready when it shows "Listening on". In a second terminal with the environment
+active, in the folder `mcp-server`, start the camera server with logins instead of its
+key:
+
+```
+OAUTH_ISSUER=http://localhost:8080/realms/inspection SERVER_URL=http://localhost:8000/mcp \
+    inspection-camera --http
+```
+
+In a third terminal with the environment active, start the app:
+
+```
+inspection-station --login
+```
+
+The app opens the login page in your browser. Log in as `viewer`; the browser says
+"Logged in", and the window "Logged in as viewer". Ask, for example, "Take a photo.
+What does the gauge read? Record it as part gauge-01." (The fake camera serves its
+photos in turn, the gauge first.) The camera server refuses to record, with the reason,
+shown in red; Claude reads the refusal and tells you. Close the window, start the app
+again, and log in as `inspector` (if the login page offers `viewer` again, the round
+arrows next to the name start over with another user). Ask "Take a photo. Inspect the
+packs for damage; they are part packs-01. Record the result.": the next photo shows the
+packs, and now the result is recorded, after the confirmation dialog if Claude finds a
+pack damaged. Every line of `mcp-server/logs/audit.log` and every record names the
+person logged in.
+
+The app keeps the login only while it runs: each start asks again. A login token is
+valid for a few minutes (the demo's: 5); the app renews it by itself while it runs, as
+long as the login server allows.
+
+**The camera on another computer**: the token travels with every request, so over the
+network it should be encrypted (HTTPS); Claude Code, for one, sends logins only over
+HTTPS or to `localhost`. On the station computer, start the login server and the camera
+server with certificates, as the `mcp-server` README describes in "Logins with roles",
+"Logins on two computers". Copy `certs/ca.pem` from there to the app's computer, into
+the folder you start the app in, and start it with the station computer's address (here
+192.168.0.20):
+
+```
+inspection-station --login --server https://192.168.0.20:8000/mcp --trust ca.pem
+```
+
+`--trust` tells the app to accept certificates signed by the demo's own certificate
+authority, `ca.pem`. The browser warns about the private certificate on the login page
+once; accept it, or import `ca.pem` into the browser.
+
+If something is wrong, the window says what, for example that the camera server takes
+logins and the app was started without `--login`, or that the address given with
+`--server` differs from the one the camera server was started with (`SERVER_URL`): it
+must be the same, letter for letter.
+
 ## With Claude Code instead
 
 This folder's `.mcp.json` tells Claude Code how to start the camera server with the fake
@@ -268,8 +344,8 @@ a camera on another computer, see the `mcp-server` README.
 
 ## On Windows
 
-Not tested yet. **With a virtual environment**: the same steps in PowerShell, in the
-folder that holds both repositories:
+**With a virtual environment**: the same steps in PowerShell, in the folder that holds
+both repositories:
 
 ```
 python -m venv station-env
@@ -293,19 +369,46 @@ The Claude API key goes into `$HOME\.config\anthropic\api-key`:
 
 ```
 mkdir $HOME\.config\anthropic
+New-Item $HOME\.config\anthropic\api-key
 notepad $HOME\.config\anthropic\api-key
 ```
 
-Paste the key, save, and close Notepad. Notepad may add `.txt` to the name when saving;
-check with `dir $HOME\.config\anthropic` that the file is called `api-key`.
+Paste the key, save, and close Notepad. The second line makes the file, empty, so that
+Notepad opens it; given a file that does not exist yet, Notepad would make `api-key.txt`
+instead, which the app does not read.
+
+A setting written in front of a command, as in `OAUTH_ISSUER=... inspection-camera
+--http` in [Logins with roles](#logins-with-roles), is a line of its own in PowerShell,
+starting with `$env:`; it holds until the window is closed. A `\` at the end of a line
+means the command goes on in the next one. For the camera server with logins, in the
+folder `mcp-server`:
+
+```
+$env:OAUTH_ISSUER = 'http://localhost:8080/realms/inspection'
+$env:SERVER_URL = 'http://localhost:8000/mcp'
+inspection-camera --http
+```
+
+The login server's script `scripts/keycloak.sh` is a bash script: run it on a Linux
+computer (see the `mcp-server` README, "On Windows").
+
+Checked on Windows Server 2025 with Python 3.14, in a virtual environment and with
+Miniconda, from fresh copies of both repositories: the tests; the app with the fake
+camera and the key file (the live view, answers, the confirmation dialog); logins with
+the login server on a Linux computer, over HTTP and over HTTPS with `--trust` (a viewer
+refused recording, an inspector's fail confirmed, the login renewed without asking
+again); and Claude Code started in this folder.
 
 ## Files
 
 - `inspection_station/station.py`: the work behind the window: the loop between Claude
   and the camera server, the costs, and errors in plain words
 - `inspection_station/app.py`: the window: live view, conversation, confirmation dialog
+- `inspection_station/login.py`: the login in the browser (the MCP SDK does the rest)
 - `tests/test_station.py`: the loop, against the real camera server with its fake camera
   and a stand-in for Claude
+- `tests/test_login.py`: the app's part of the login, with a stand-in for the browser
+- `tests/test_dialog.py`: the confirmation dialog: Enter never marks a part as failed
 - `.mcp.json`: the camera server with the fake camera, for Claude Code in this folder
 - `docs/setup.svg`: the figure of the setup
 

@@ -109,25 +109,28 @@ AI application, not protection.
 
 ## Installing
 
-Python 3.14, the version tested on Linux and Windows. macOS is not tested yet: the
-camera code for it follows the documentation of the libraries it uses, but has not run
-on a Mac. The commands in this README are for Linux, and should work the same in the
-macOS Terminal; for PowerShell, see [On Windows](#on-windows). Where a command sets the
-camera, which PowerShell writes differently, the PowerShell form is shown next to it.
+Python 3.13 or later: tested with 3.14 on Linux and Windows; the tests also pass with
+3.13. macOS is not tested yet: the camera code for it follows the documentation of the
+libraries it uses, but has not run on a Mac. The commands in this README are for Linux,
+and should work the same in the macOS Terminal; for PowerShell, see
+[On Windows](#on-windows). Where a command sets the camera, which PowerShell writes
+differently, the PowerShell form is shown next to it.
 
 In a terminal, in this repository's folder:
 
 ```
-python3.14 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[test]"
 pytest -q
 ```
 
-This makes a Python environment of its own in `.venv`, installs the server into it,
-and runs the tests. The tests use a fake camera with pictures drawn by the test code, so
-they need no hardware. The install adds the command `inspection-camera`, which starts
-the server. In every new terminal, activate the environment again before using it:
+(If `python3 --version` shows a version older than 3.13, write `python3.14` or
+`python3.13` instead of `python3`.) This makes a Python environment of its own in
+`.venv`, installs the server into it, and runs the tests. The tests use a fake camera
+with pictures drawn by the test code, so they need no hardware. The install adds the
+command `inspection-camera`, which starts the server. In every new terminal, activate
+the environment again before using it:
 
 ```
 source .venv/bin/activate
@@ -400,7 +403,8 @@ reads the person's roles from it. `scripts/keycloak.sh` starts a demo login serv
 [podman](https://podman.io/)) with two users: `inspector` (password `inspector`; may
 record results) and `viewer` (password `viewer`; may only take photos, look closer and
 watch the live view). Claude Code is registered there in advance, as an administrator
-would register each application that may connect.
+would register each application that may connect, and so is the desktop app of the
+repository `mcp-client` (its README, "Logins with roles", has its steps).
 
 On one computer, in three terminals (the first two in this repository's folder, with
 the environment active):

@@ -7,7 +7,7 @@ name = "mcp-inspection-camera"
 version = "0.1.0"
 description = "An MCP server that lets an AI application take photos with a camera and record inspection results"
 license = "MIT"
-requires-python = ">=3.14"   # the version tested, on Linux and Windows
+requires-python = ">=3.13"   # tested with 3.14 on Linux and Windows; the tests pass with 3.13 too
 dependencies = [
     "mcp[cli]==2.3.0",
     "pyjwt[crypto]",

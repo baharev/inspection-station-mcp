@@ -286,8 +286,10 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
     @mcp.custom_route("/live/frame.jpg", methods=["GET"])
     async def live_frame(request: Request) -> Response:
         # The SDK checks the key or token of every request, but refuses missing ones only
-        # at /mcp. Here: none is needed from this computer, one is from any other.
-        if get_access_token() is None and not from_this_computer(request):
+        # at /mcp. Here: none is needed from this computer, one is from any other. One sent
+        # and refused (expired, say) is refused here too, never taken as the person here.
+        if get_access_token() is None and ("authorization" in request.headers
+                                           or not from_this_computer(request)):
             return PlainTextResponse("Send the secret key or a login token.", 401,
                                      headers={"WWW-Authenticate": "Bearer"})
         name, roles = caller()
