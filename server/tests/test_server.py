@@ -103,20 +103,29 @@ async def test_tools_are_listed_with_hints(server):
 
 # --- capture_image -----------------------------------------------------------------
 
-async def test_capture_returns_a_capped_photo_and_saves_it(server, tmp_path):
+async def test_capture_sends_a_capped_photo_and_keeps_the_full_one(server, tmp_path):
     async with Client(server) as client:
         result = await client.call_tool("capture_image", {})
     assert not result.is_error
     image_id = result.content[0].text.split()[1]
     assert decode(result).size == (1280, 720)          # 1600x900 capped, shape kept
-    assert (tmp_path / "data" / "captures" / f"{image_id}.jpg").exists()
-    assert f"capture_image {image_id} 1280x720" in log_lines(tmp_path, "audit.log")[0]
+    assert "(1600x900 pixels, shown here at 1280x720;" in result.content[0].text
+    kept = Image.open(tmp_path / "data" / "captures" / f"{image_id}.jpg")
+    assert kept.size == (1600, 900)                    # the zoom's source: every pixel
+    assert f"capture_image {image_id} 1600x900" in log_lines(tmp_path, "audit.log")[0]
 
 
 async def test_fake_camera_serves_the_photos_in_turn(server):
     async with Client(server) as client:
         sizes = [decode(await client.call_tool("capture_image", {})).size for _ in range(3)]
     assert sizes == [(1280, 720), (640, 480), (1280, 720)]
+
+
+async def test_a_photo_that_fits_says_only_its_size(server):
+    async with Client(server) as client:
+        await client.call_tool("capture_image", {})
+        result = await client.call_tool("capture_image", {})
+    assert result.content[0].text.endswith("(640x480 pixels)")
 
 
 async def test_two_photos_in_the_same_second_get_different_ids(server):
@@ -145,6 +154,7 @@ async def test_zoom_returns_the_chosen_region_enlarged(server):
     assert max(crop.size) == 1024
     r, g, b = crop.convert("RGB").getpixel((crop.width // 2, crop.height // 2))
     assert b > 150 and r < 100                        # the right half of the photo is blue
+    assert "pixels 960..1440 across and 225..675 down" in result.content[0].text   # full size
 
 
 @pytest.mark.parametrize("box, reason", [

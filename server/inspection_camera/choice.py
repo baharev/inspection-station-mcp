@@ -1,10 +1,12 @@
-"""Which camera the server uses: always chosen by a person, never guessed.
+"""Which camera the server uses, and the size of its photos: chosen by a person, never guessed.
 
-A person chooses it once in a menu (a number to type), and the choice is saved, so later
-starts use it without asking. The setting CAMERA, if set, comes first. What is saved is
-the camera's name or path, never its number in the menu: numbers change when devices are
-plugged in. Where nobody can answer the menu (Claude Code starting the server, or a
-server started without a terminal), the server stops with the reason instead of guessing.
+A person chooses them once in two menus (a number to type: the camera, then the size from
+those it offers, with a suggestion that Enter takes), and the choice is saved, so later
+starts use it without asking. The settings CAMERA and CAMERA_SIZE, if set, come first.
+What is saved is the camera's name or path, never its number in the menu: numbers change
+when devices are plugged in. Where nobody can answer the menu (Claude Code starting the
+server, or a server started without a terminal), the server stops with the reason
+instead of guessing.
 """
 
 import json
@@ -12,7 +14,8 @@ import os
 import sys
 from pathlib import Path
 
-from inspection_camera.camera import CameraError, list_cameras
+from inspection_camera.camera import (CameraError, camera_sizes, list_cameras, parse_size,
+                                      size_text, suggested_size)
 
 SETTINGS_FILE = Path.home() / ".config" / "inspection-camera" / "settings.json"
 FAKE = "fake"
@@ -22,13 +25,16 @@ FROM_CAMERA = "set by CAMERA"
 
 
 class Choice:
-    """A camera to start with: its setting (what CAMERA would be) and what to call it."""
+    """A camera to start with: its setting (what CAMERA would be), what to call it, and
+    the size of its photos (None for the sample photos, which have their own)."""
 
-    def __init__(self, device: str, name: str, source: str):
-        self.device, self.name, self.source = device, name, source
+    def __init__(self, device: str, name: str, source: str,
+                 size: tuple[int, int] | None = None):
+        self.device, self.name, self.source, self.size = device, name, source, size
 
     def describe(self) -> str:
-        return f"Camera: {self.name}, {self.source}"
+        size = f", photos of {size_text(self.size)} pixels" if self.size else ""
+        return f"Camera: {self.name}{size}, {self.source}"
 
 
 def read_settings(path: Path | None = None) -> dict:
@@ -53,13 +59,15 @@ def saved(path: Path | None = None) -> Choice | None:
     settings = read_settings(path)
     try:
         return Choice(settings["camera"], settings["camera_name"],
-                      f"chosen earlier; to choose another: {CHOOSE}")
+                      f"chosen earlier; to choose another: {CHOOSE}",
+                      parse_size(settings.get("size") or ""))
     except KeyError:
         return None
 
 
 def save(choice: Choice, path: Path | None = None) -> None:
-    write_settings({"camera": choice.device, "camera_name": choice.name}, path)
+    write_settings({"camera": choice.device, "camera_name": choice.name,
+                    "size": size_text(choice.size) if choice.size else None}, path)
 
 
 def menu_entries() -> list[tuple[str, str]]:
@@ -95,28 +103,84 @@ def ask(entries: list[tuple[str, str]], read=input, say=print) -> tuple[str, str
         say(f"Please type a number from 1 to {len(entries)}.")
 
 
+def sizes_of(device: str, name: str) -> list[tuple[int, int]]:
+    """The sizes the camera offers; stops the start if it cannot tell."""
+    try:
+        sizes = camera_sizes(device)
+    except CameraError as err:
+        sys.exit(str(err))
+    if not sizes:
+        sys.exit(f"The camera {name} offers no photo size of at least 640 pixels across.")
+    return sizes
+
+
+def ask_size(sizes: list[tuple[int, int]], read=input, say=print) -> tuple[int, int]:
+    """Shows the sizes and returns the one whose number the person types (Enter: the
+    suggested one)."""
+    suggested = suggested_size(sizes)
+    say("Which photo size? Larger photos show more detail when the AI zooms in; the live "
+        "view then shows fewer pictures a second.")
+    for n, size in enumerate(sizes, 1):
+        say(f"  {n:>{len(str(len(sizes)))}}  {size_text(size)}"
+            + ("  (suggested)" if size == suggested else ""))
+    while True:
+        try:
+            answer = read(f"Type its number (1 to {len(sizes)}), or press Enter for "
+                          f"{size_text(suggested)}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            sys.exit("\nNo photo size chosen; the server did not start.")
+        if not answer:
+            return suggested
+        if answer.isdigit() and 1 <= int(answer) <= len(sizes):
+            return sizes[int(answer) - 1]
+        say(f"Please type a number from 1 to {len(sizes)}, or just press Enter.")
+
+
 def for_start(choose: bool, can_ask: bool, path: Path | None = None,
               read=input, say=print) -> Choice:
-    """The camera to start with: CAMERA if set, else the saved choice, else the menu.
+    """The camera to start with: CAMERA if set, else the saved choice, else the menu; and
+    the size of its photos: CAMERA_SIZE if set, else the saved one, else the size menu.
 
-    choose: show the menu even if a camera was chosen earlier (--choose-camera).
-    can_ask: someone can answer the menu in a terminal.
+    choose: show the menus even if a camera was chosen earlier (--choose-camera).
+    can_ask: someone can answer the menus in a terminal.
     """
-    if setting := os.environ.get("CAMERA", "").strip():
-        if choose:
-            sys.exit("The setting CAMERA is set in this terminal, and it comes before any "
-                     "choice made in the menu. Remove it first (Linux and macOS: "
-                     "unset CAMERA; PowerShell: Remove-Item Env:CAMERA), then start again.")
-        name = SAMPLE_PHOTOS if setting == FAKE else setting
-        return Choice(setting, name, FROM_CAMERA)
-    if not choose and (choice := saved(path)):
+    size_setting = os.environ.get("CAMERA_SIZE", "").strip()
+    size = parse_size(size_setting)
+    if size_setting and not size:
+        sys.exit(f"CAMERA_SIZE is {size_setting!r}; write it as width x height in pixels, "
+                 "like 1920x1080.")
+    for setting in ("CAMERA", "CAMERA_SIZE"):
+        if choose and os.environ.get(setting, "").strip():
+            sys.exit(f"The setting {setting} is set in this terminal, and it comes before "
+                     "any choice made in the menu. Remove it first (Linux and macOS: "
+                     f"unset {setting}; PowerShell: Remove-Item Env:{setting}), then start "
+                     "again.")
+    if device := os.environ.get("CAMERA", "").strip():
+        if device == FAKE:
+            return Choice(device, SAMPLE_PHOTOS, FROM_CAMERA)
+        if not size:
+            sizes = ", ".join(size_text(s) for s in sizes_of(device, device))
+            sys.exit(f"CAMERA is set, so set CAMERA_SIZE too: the size of the photos, one of "
+                     f"those this camera offers: {sizes}.")
+        return Choice(device, device, FROM_CAMERA, size)
+    path = path or SETTINGS_FILE
+    choice = None if choose else saved(path)
+    if choice and (choice.device == FAKE or choice.size or size):
+        choice.size = None if choice.device == FAKE else size or choice.size
         return choice
     if not can_ask:
-        sys.exit(f"No camera chosen yet. Choose one once, in a terminal: {CHOOSE} "
-                 "(or set CAMERA; CAMERA=fake serves the sample photos).")
-    device, name = ask(menu_entries(), read, say)
-    choice = Choice(device, name, f"chosen now; to choose another: {CHOOSE}")
-    path = path or SETTINGS_FILE
+        sys.exit(f"No {'photo size' if choice else 'camera'} chosen yet. Choose "
+                 f"{'it' if choice else 'one'} once, in a terminal: {CHOOSE} (or set "
+                 + ("CAMERA_SIZE, like 1920x1080)." if choice else
+                    "CAMERA; CAMERA=fake serves the sample photos)."))
+    if choice:   # chosen before photo sizes could be chosen: only the size is asked
+        say(f"Camera: {choice.name}, chosen earlier.")
+    else:
+        device, name = ask(menu_entries(), read, say)
+        choice = Choice(device, name, f"chosen now; to choose another: {CHOOSE}")
+    if choice.device != FAKE:
+        say("Asking the camera which photo sizes it offers; this can take a few seconds.")
+        choice.size = ask_size(sizes_of(choice.device, choice.name), read, say)
     save(choice, path)
     say(f"Saved in {path}: from now on the server starts with this choice without asking.")
     return choice

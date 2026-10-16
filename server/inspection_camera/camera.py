@@ -36,6 +36,97 @@ def list_cameras() -> list[tuple[str, str]]:
             for path in sorted(Path("/dev/v4l/by-id").glob("*-video-index0"))]
 
 
+# Sizes tried on Windows and macOS, whose camera lists give no sizes: the camera answers
+# each with the nearest size it has. Linux asks the camera for its own list instead.
+COMMON_SIZES = [(640, 480), (800, 600), (1024, 768), (1280, 720), (1280, 960), (1280, 1024),
+                (1600, 900), (1600, 1200), (1920, 1080), (2048, 1536), (2304, 1536),
+                (2560, 1440), (2592, 1944), (3264, 2448), (3840, 2160)]
+MIN_WIDTH = 640           # smaller photos show too little for an inspection
+SUGGESTED = (1920, 1080)  # the suggested size: this, else the largest that fits inside it
+
+
+def parse_size(text: str) -> tuple[int, int] | None:
+    """'1920x1080' as (1920, 1080); None if it is not written like that."""
+    if match := re.fullmatch(r"\s*(\d+)\s*[xX×]\s*(\d+)\s*", text or ""):
+        return int(match[1]), int(match[2])
+    return None
+
+
+def size_text(size: tuple[int, int]) -> str:
+    return f"{size[0]}x{size[1]}"
+
+
+def camera_sizes(device: str) -> list[tuple[int, int]]:
+    """The photo sizes the camera offers, largest first, from MIN_WIDTH pixels across."""
+    sizes = _linux_sizes(device) if sys.platform == "linux" else _probed_sizes(device)
+    return sorted({s for s in sizes if s[0] >= MIN_WIDTH}, key=lambda s: (s[0] * s[1], s[0]),
+                  reverse=True)
+
+
+def suggested_size(sizes: list[tuple[int, int]]) -> tuple[int, int]:
+    """SUGGESTED if offered, else the largest size that fits inside it, else the smallest.
+
+    Never simply the largest: cameras offer sizes their sensor does not have, enlarged
+    from a smaller picture (the Logitech C922's 2304x1536 shows less than its 1920x1080).
+    """
+    fitting = [s for s in sizes if s[0] <= SUGGESTED[0] and s[1] <= SUGGESTED[1]]
+    return max(fitting, key=lambda s: s[0] * s[1]) if fitting else min(
+        sizes, key=lambda s: s[0] * s[1])
+
+
+def _linux_sizes(device: str) -> list[tuple[int, int]]:
+    """The camera's own list of sizes in the format the server reads (YUYV), through V4L2.
+
+    Works while another program reads the camera too.
+    """
+    import fcntl
+    import struct
+
+    yuyv = int.from_bytes(b"YUYV", "little")
+    enum_framesizes = (3 << 30) | (44 << 16) | (ord("V") << 8) | 74   # VIDIOC_ENUM_FRAMESIZES
+    sizes = []
+    try:
+        with open(device, "rb", buffering=0) as camera:
+            for index in range(200):
+                answer = bytearray(struct.pack("<3I", index, yuyv, 0) + bytes(32))
+                try:
+                    fcntl.ioctl(camera, enum_framesizes, answer)
+                except OSError:   # the end of the list
+                    break
+                kind, *numbers = struct.unpack_from("<3I6I", answer)[2:]
+                if kind == 1:   # a fixed size
+                    sizes.append((numbers[0], numbers[1]))
+                    continue
+                # Any size within limits (rare in webcams): the common ones that fit.
+                low_w, high_w, _, low_h, high_h, _ = numbers
+                sizes += [(w, h) for w, h in COMMON_SIZES + [(high_w, high_h)]
+                          if low_w <= w <= high_w and low_h <= h <= high_h]
+                break
+    except OSError as err:
+        raise CameraError(f"Cannot read which sizes the camera {device} offers: {err}") from None
+    return sizes
+
+
+def _probed_sizes(device: str) -> list[tuple[int, int]]:
+    """Windows and macOS: asks the camera for each common size and keeps what it gives."""
+    import cv2
+
+    camera = RealCamera(device)._open()
+    try:
+        if not camera.isOpened():
+            raise CameraError(f"The camera {device} does not open. Is it plugged in, or is "
+                              "another program using it (the server, say)?")
+        sizes = set()
+        for width, height in COMMON_SIZES:
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            sizes.add((int(camera.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                       int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))))
+    finally:
+        camera.release()
+    return list(sizes)
+
+
 def _linux_name(path: Path) -> str:
     """Maker and model as udev knows them, and whether the camera is built in."""
     import subprocess
@@ -76,10 +167,10 @@ class RealCamera:
     """
 
     WARM_UP = 20     # frames read after opening before the first photo: the auto-exposure settles
-    TIMEOUT = 15     # seconds to wait for a frame
+    TIMEOUT = 15     # seconds to wait for the next frame
 
-    def __init__(self, device: str, width: int = 1280, height: int = 720, idle: float = 60):
-        self.device, self.width, self.height, self.idle = device, width, height, idle
+    def __init__(self, device: str, size: tuple[int, int] = (1280, 720), idle: float = 60):
+        self.device, self.size, self.idle = device, size, idle
         self._lock = threading.Condition()
         self._reader = None     # the thread reading the camera, while it is open
         self._frame = None      # the latest frame, as OpenCV gives it (BGR)
@@ -87,6 +178,7 @@ class RealCamera:
         self._count = 0         # frames read since the camera was opened
         self._error = ""        # why the reader stopped, if it failed
         self._last_use = 0.0
+        self._rate = None       # frames a second the camera sends, once measured
 
     def _open(self):
         import cv2  # only needed with real hardware
@@ -125,8 +217,9 @@ class RealCamera:
             if not camera.isOpened():
                 raise CameraError(f"The camera {self.device} does not open. Is it plugged in, "
                                   "or is another program using it?")
-            camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.size[0])
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.size[1])
+            times = []   # when the last frames arrived, to measure the rate
             while True:
                 with self._lock:
                     if time.monotonic() - self._last_use > self.idle:
@@ -134,7 +227,15 @@ class RealCamera:
                 ok, frame = camera.read()
                 if not ok:
                     raise CameraError(f"The camera {self.device} returned no picture.")
+                if (frame.shape[1], frame.shape[0]) != self.size:   # never another size
+                    raise CameraError(
+                        f"The camera {self.device} sends photos of {frame.shape[1]}x"
+                        f"{frame.shape[0]} pixels, not the {size_text(self.size)} chosen. "
+                        "Choose a size it offers: inspection-camera --choose-camera")
+                times = times[-29:] + [time.monotonic()]
                 with self._lock:
+                    if len(times) > 1:
+                        self._rate = (len(times) - 1) / (times[-1] - times[0])
                     self._frame, self._time, self._count = frame, time.monotonic(), self._count + 1
                     self._lock.notify_all()
         except Exception as err:  # the waiting callers report it
@@ -145,7 +246,7 @@ class RealCamera:
             if camera is not None:
                 camera.release()
             with self._lock:
-                self._reader, self._frame = None, None
+                self._reader, self._frame, self._rate = None, None, None
                 self._lock.notify_all()
 
     def _wait(self, ready) -> Image.Image:
@@ -166,7 +267,8 @@ class RealCamera:
                     self._count = 0
                     self._reader = threading.Thread(target=self._read, daemon=True)
                     self._reader.start()
-                if not self._lock.wait(start + self.TIMEOUT - time.monotonic()):
+                # Counted from the latest frame: a slow camera (large photos) is waited for.
+                if not self._lock.wait(max(start, self._time) + self.TIMEOUT - time.monotonic()):
                     raise CameraError(f"The camera {self.device} sent no picture for "
                                       f"{self.TIMEOUT} seconds.")
         return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -179,6 +281,11 @@ class RealCamera:
     def view(self) -> Image.Image:
         """The latest frame, for the live view (also while the exposure settles)."""
         return self._wait(lambda t, n: True)
+
+    def rate(self) -> float | None:
+        """How many frames a second the camera sends, if it is open and measured."""
+        with self._lock:
+            return self._rate
 
 
 class FakeCamera:
@@ -209,3 +316,6 @@ class FakeCamera:
 
     def view(self) -> Image.Image:
         return self._load(advance=False)
+
+    def rate(self) -> None:
+        return None   # stored photos: no frames a second

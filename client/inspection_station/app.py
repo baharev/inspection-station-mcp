@@ -20,7 +20,7 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 
 import anthropic
-from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QImage, QPixmap, QTextBlockFormat, QTextCharFormat, QTextCursor,
                            QTextDocument)
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout,
@@ -135,6 +135,7 @@ class ConfirmDialog(QDialog):
     def __init__(self, parent, question: Question):
         super().__init__(parent)
         self.setWindowTitle("The camera server asks you")
+        self.room = (parent.screen() if parent else QApplication.primaryScreen()).availableGeometry()
         layout = QVBoxLayout(self)
         message = QLabel(question.message)
         message.setWordWrap(True)
@@ -144,8 +145,12 @@ class ConfirmDialog(QDialog):
             picture = QLabel()
             pixmap = QPixmap()
             pixmap.loadFromData(question.picture)
-            picture.setPixmap(pixmap.scaledToWidth(min(pixmap.width(), 800),
-                                                   Qt.TransformationMode.SmoothTransformation))
+            # The whole dialog fits on the screen, above the taskbar: the picture gets
+            # the room the text and the buttons leave.
+            fit = QSize(min(800, self.room.width() - 100), self.room.height() - 300)
+            picture.setPixmap(pixmap.scaled(fit.boundedTo(pixmap.size()),
+                                            Qt.AspectRatioMode.KeepAspectRatio,
+                                            Qt.TransformationMode.SmoothTransformation))
             layout.addWidget(picture)
         buttons = QDialogButtonBox()
         yes = buttons.addButton("Yes, mark it as failed", QDialogButtonBox.ButtonRole.YesRole)
@@ -159,6 +164,29 @@ class ConfirmDialog(QDialog):
         QTimer.singleShot(0, no.setFocus)
         buttons.clicked.connect(lambda button: self.done(1 if button is not no else 2))
         layout.addWidget(buttons)
+        self.place()
+
+    def place(self) -> None:
+        """Centered on the screen at its final size. Qt would center it over the window
+        at a smaller size, and on Windows the dialog then grew down under the taskbar."""
+        self.adjustSize()
+        title = 40   # room for the title bar, which has no height until the dialog shows
+        self.move(self.room.left() + max(0, (self.room.width() - self.width()) // 2),
+                  self.room.top() + max(0, (self.room.height() - self.height() - title) // 2))
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(300, self.keep_on_screen)   # once the window has its frame
+
+    def keep_on_screen(self) -> None:
+        """If the dialog is still partly off the screen or under the taskbar, moves it
+        onto the screen, as little as needed."""
+        room = self.room
+        frame = self.frameGeometry()
+        x = max(room.left(), min(frame.left(), room.right() + 1 - frame.width()))
+        y = max(room.top(), min(frame.top(), room.bottom() + 1 - frame.height()))
+        if (x, y) != (frame.left(), frame.top()):
+            self.move(x, y)
 
     @staticmethod
     def ask(parent, question: Question) -> bool | None:
@@ -409,7 +437,11 @@ def main() -> None:
     if login:
         login.tell = worker.note.emit
     window = Window(worker, args.server, live)
-    window.show()
+    room = window.screen().availableSize()
+    if window.width() + 40 > room.width() or window.height() + 80 > room.height():
+        window.showMaximized()   # a small screen: Windows would let it run under the taskbar
+    else:
+        window.show()
     sys.exit(app.exec())
 
 

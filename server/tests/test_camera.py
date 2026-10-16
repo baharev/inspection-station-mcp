@@ -7,34 +7,46 @@ stand-in that delivers numbered frames, so a test can tell which frame it got.
 import time
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
 from PIL import Image
 
-from inspection_camera.camera import CameraError, FakeCamera, RealCamera
+from inspection_camera import camera as cameras
+from inspection_camera.camera import (CameraError, FakeCamera, RealCamera, camera_sizes,
+                                      parse_size, suggested_size)
 from inspection_camera.server import main
 
 
 class StandIn:
     """Replaces OpenCV's VideoCapture: frame n is a small picture with every pixel n."""
 
-    def __init__(self, opens=True, period=0.02, frames=None):
-        self.opens, self.period, self.frames = opens, period, frames
+    def __init__(self, opens=True, period=0.02, frames=None, size=(64, 48), sizes=()):
+        self.opens, self.period, self.frames, self.size = opens, period, frames, size
+        self.sizes = sizes   # what it offers, for set(): the nearest one is taken
         self.n = 0
         self.released = False
+        self.asked = [0, 0]
 
     def isOpened(self):
         return self.opens
 
     def set(self, setting, value):
+        self.asked[setting == cv2.CAP_PROP_FRAME_HEIGHT] = value
+        if setting == cv2.CAP_PROP_FRAME_HEIGHT and self.sizes:
+            self.size = min(self.sizes, key=lambda s: abs(s[0] - self.asked[0])
+                            + abs(s[1] - self.asked[1]))
         return True
+
+    def get(self, setting):
+        return self.size[setting == cv2.CAP_PROP_FRAME_HEIGHT]
 
     def read(self):
         time.sleep(self.period)
         if self.frames is not None and self.n >= self.frames:   # unplugged
             return False, None
         self.n += 1
-        return True, np.full((48, 64, 3), self.n, np.uint8)
+        return True, np.full((self.size[1], self.size[0], 3), self.n, np.uint8)
 
     def release(self):
         self.released = True
@@ -49,7 +61,7 @@ def stand_in_camera(monkeypatch, idle=0.5, **stand_in):
         return opened[-1]
 
     monkeypatch.setattr(RealCamera, "_open", open_device)
-    camera = RealCamera("stand-in", idle=idle)
+    camera = RealCamera("stand-in", (64, 48), idle=idle)
     camera.WARM_UP = 5
     return camera, opened
 
@@ -102,6 +114,53 @@ def test_a_camera_that_stops_sending_gives_a_readable_error(monkeypatch):
     with pytest.raises(CameraError, match="returned no picture"):
         camera.take()
     assert opened[0].released
+
+
+def test_a_slow_camera_is_waited_for_as_long_as_frames_keep_coming(monkeypatch):
+    camera, _ = stand_in_camera(monkeypatch, period=0.1)
+    camera.TIMEOUT = 0.3   # less than the five frames of warm-up take
+    assert number(camera.take()) >= camera.WARM_UP
+
+
+def test_a_camera_that_sends_another_size_than_chosen_is_refused(monkeypatch):
+    camera, _ = stand_in_camera(monkeypatch, size=(32, 24))
+    with pytest.raises(CameraError, match="sends photos of 32x24 pixels, not the 64x48 chosen"):
+        camera.take()
+
+
+def test_the_rate_of_frames_is_measured_while_the_camera_is_open(monkeypatch):
+    camera, _ = stand_in_camera(monkeypatch, period=0.05)
+    assert camera.rate() is None
+    camera.take()
+    assert 10 < camera.rate() < 25    # a frame every 0.05 s: 20 a second, give or take
+
+
+C922 = [(2304, 1536), (2304, 1296), (1920, 1080), (1600, 896), (1280, 720), (640, 480)]
+
+
+def test_sizes_are_written_like_1920x1080():
+    assert parse_size("1920x1080") == parse_size(" 1920 X 1080 ") == (1920, 1080)
+    assert parse_size("1920") is None and parse_size("big") is None
+
+
+def test_the_suggested_size_is_full_hd_or_the_largest_inside_it_never_simply_the_largest():
+    assert suggested_size(C922) == (1920, 1080)
+    assert suggested_size([(1280, 960), (1280, 720), (640, 480)]) == (1280, 960)   # C270
+    assert suggested_size([(3840, 2160), (2560, 1440)]) == (2560, 1440)   # none fits: smallest
+
+
+def test_the_sizes_are_listed_largest_first_without_the_tiny_ones(monkeypatch):
+    monkeypatch.setattr("inspection_camera.camera.sys.platform", "linux")
+    monkeypatch.setattr(cameras, "_linux_sizes", lambda device: [(320, 240), (640, 480),
+                                                                   (1920, 1080), (1280, 720)])
+    assert camera_sizes("any") == [(1920, 1080), (1280, 720), (640, 480)]
+
+
+def test_on_windows_and_macos_the_sizes_are_found_by_asking_for_common_ones(monkeypatch):
+    monkeypatch.setattr("inspection_camera.camera.sys.platform", "win32")
+    monkeypatch.setattr(RealCamera, "_open", lambda self: StandIn(sizes=C922))
+    assert camera_sizes("USB Camera") == [(2304, 1536), (1920, 1080), (1600, 896),
+                                          (1280, 720), (640, 480)]   # 2304x1296: not asked
 
 
 def test_a_camera_that_is_not_there_is_refused_without_opening_it(monkeypatch, tmp_path):

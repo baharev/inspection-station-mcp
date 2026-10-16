@@ -7,8 +7,10 @@
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; background: #111; color: #ddd; font: 15px/1.4 system-ui, sans-serif; }
-  main { max-width: 1280px; margin: 0 auto; padding: 12px 16px; }
-  img { display: block; width: 100%; height: auto; background: #222; }
+  /* The picture fills what the window leaves below the text, shrunk to fit: no scrolling. */
+  main { box-sizing: border-box; height: 100vh; height: 100dvh; padding: 12px 16px;
+         display: flex; flex-direction: column; }
+  img { display: block; flex: 1 1 0; min-height: 0; width: 100%; object-fit: contain; }
   img:not([src]) { display: none; }
   p { margin: 8px 0; }
   form[hidden] { display: none; }
@@ -57,7 +59,12 @@ async function next() {
       frames += 1;
       const seconds = (performance.now() - since) / 1000;
       if (!live || seconds >= 2) {
-        statusLine.textContent = live ? `Live: ${(frames / seconds).toFixed(1)} frames a second.` : "Live.";
+        // The photo size, how often the camera sends a picture, how often this page gets one.
+        const size = view.naturalWidth ? `${view.naturalWidth}x${view.naturalHeight} pixels. ` : "";
+        const rate = response.headers.get("X-Camera-Rate");
+        statusLine.textContent = !live ? "Live." : `Live: ${size}` +
+          (rate ? `The camera sends ${rate} pictures a second, ` : "") +
+          `${rate ? "this" : "This"} page shows ${(frames / seconds).toFixed(1)} a second.`;
         live = true; frames = 0; since = performance.now();
       }
     } else if (response.status === 401 || response.status === 403) {

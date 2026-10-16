@@ -40,7 +40,8 @@ inspection-server-window
 ```
 
 The last line opens the server window. Choose a camera, or "Sample photos, no camera" to
-try it without one, and click **Start**. The box at the bottom then shows the address of
+try it without one; for a camera, the suggested photo size is filled in, and the list
+below it offers the others. Click **Start**. The box at the bottom then shows the address of
 the live view, and the command that connects Claude Code to the server: run that command
 once in the folder where you use Claude Code, start Claude Code there with `claude`, and
 ask "Take a photo. What does the gauge read?" The desktop app, in the repository
@@ -92,7 +93,7 @@ which serves stored photos instead.
 
 | Tool | What it does |
 |---|---|
-| `capture_image` | Takes a photo, capped at 1280×720 pixels, saves it and returns it with an ID such as `20261014-213005`. Changes nothing else. |
+| `capture_image` | Takes a photo at the size chosen for the camera, saves it at that size, and returns it, capped at 1280×720 pixels, with an ID such as `20261014-213005`. Changes nothing else. |
 | `zoom_image(image_id, left, top, width, height)` | "Look closer": crops a rectangle of an earlier photo (given as fractions of the photo, 0 to 1) and returns it enlarged. Read-only. |
 | `record_inspection(image_id, part_id, verdict, findings)` | Adds one record to the inspection log. Verdict `pass`, `fail` or `unsure`. A fail needs a person's yes; without it, the part is recorded as unsure. |
 
@@ -101,7 +102,9 @@ used here (2026-07-28) keeps no session between calls.
 
 The zoom tool lets the AI decide for itself that it cannot see well enough and take a
 closer look, for example at a small label in a corner. Enlarging shows what the camera
-captured more clearly; it cannot add detail the camera did not capture. Very small print
+captured more clearly; it cannot add detail the camera did not capture. It crops the
+saved photo, at its full size, so a larger photo size shows more when zoomed (see
+[The photo size](#the-photo-size)). Very small print
 needs a camera closer to the object, so crops smaller than a tenth of the photo are
 refused.
 
@@ -113,8 +116,8 @@ told or tries:
 - **Inputs are checked.** Photo IDs, part labels, verdicts and the length of the findings
   must have the expected form; anything else is refused with a readable reason. A photo
   ID can never point to another file.
-- **Limits are in code.** Photo size is capped; zoom rectangles must lie inside the photo
-  and not be too small.
+- **Limits are in code.** The photo the AI is sent is capped at 1280×720 pixels; zoom
+  rectangles must lie inside the photo and not be too small.
 - **A person confirms a fail.** In a plant, a failed part would be taken off the line,
   so before a fail is recorded the server asks the person at the keyboard, through the
   part of MCP that lets a server ask the user a question ("elicitation"). If they agree,
@@ -211,8 +214,8 @@ a fail, Claude Code shows the server's question in the terminal, with the box "M
 part as FAILED?" and the choices "Accept" and "Decline": "Accept" with the box ticked
 marks the part as failed; "Decline" marks it as unsure.
 
-With a real camera, choose it once, in a terminal with the environment active (see
-[Choosing a camera](#choosing-a-camera)):
+With a real camera, choose it and its photo size once, in a terminal with the
+environment active (see [Choosing a camera](#choosing-a-camera)):
 
 ```
 inspection-camera --choose-camera
@@ -253,8 +256,10 @@ Which camera should the server use?
 Type its number (1 to 3) and press Enter:
 ```
 
-Type a number and press Enter; without a camera, only the sample photos are listed. The
-server remembers the choice, so later starts skip this question. It runs until you stop
+Type a number and press Enter; without a camera, only the sample photos are listed. For a
+camera, it then asks for the photo size (see [The photo size](#the-photo-size)); press
+Enter for the suggested one. The server remembers the choice, so later starts skip these
+questions. It runs until you stop
 it with Ctrl+C. It is ready when it shows:
 
 ```
@@ -290,8 +295,10 @@ browser on this computer.
 
 ## About the live view
 
-The page shows what the camera sees, about five pictures a second, so you can set up a
-scene without a separate camera program. Photos go on working while it is open: the
+The page shows what the camera sees, up to five pictures a second, so you can set up a
+scene without a separate camera program. Below the picture, it shows the photo size and
+how many pictures a second the camera sends: fewer at larger photo sizes (see
+[The photo size](#the-photo-size)). Photos go on working while it is open: the
 server alone opens the camera, and the page and the photos share it. A photo is the
 first picture that arrives after it was asked for, so it shows the scene as it is then.
 
@@ -326,6 +333,11 @@ In the window:
   camera chosen earlier is not plugged in, the list stays empty until you plug it in and
   click **Look again**, or choose another; the window never takes another camera by
   itself.
+- **Photo size**: the sizes the camera offers, as in the terminal (see
+  [The photo size](#the-photo-size)). Choosing a camera fills in the suggested size, and
+  saves it; choose another in the list if you like. The sample photos have no size to
+  choose. On Windows, opening the list for the first time takes a few seconds: the
+  window asks the camera which sizes it has.
 - **Let other computers connect**: the same as `--host 0.0.0.0`. The window remembers it,
   in the same settings file as the camera (`"other_computers": true`). On Windows, other
   computers also need the port opened in the firewall, as in
@@ -398,9 +410,61 @@ The setting `CAMERA`, if set, comes before the saved choice, for scripts and tes
 `CAMERA=fake` for the sample photos, or a real camera, as
 `python scripts/check_camera.py` lists them (with single quotes, `CAMERA='<the value>'`:
 a name can contain spaces, and a Windows identifier contains `&`, which the terminal
-would otherwise take as an instruction of its own). Given the value, the same script
-takes one test photo, which goes to `captures/`:
-`python scripts/check_camera.py '<the value>'`.
+would otherwise take as an instruction of its own). A real camera in `CAMERA` needs its
+photo size in `CAMERA_SIZE` too, like `CAMERA_SIZE=1920x1080`; the script lists each
+camera's sizes, and without `CAMERA_SIZE` the server stops and lists them as well.
+Given the value, the same script takes one test photo, which goes to `captures/`:
+`python scripts/check_camera.py '<the value>'`, at the suggested size, or at another one
+given after it, as in `python scripts/check_camera.py '<the value>' 1280x720`.
+
+### The photo size
+
+After a camera, the server lists the photo sizes that camera offers, largest first, and
+asks for one, for example:
+
+```
+Asking the camera which photo sizes it offers; this can take a few seconds.
+Which photo size? Larger photos show more detail when the AI zooms in; the live view then shows fewer pictures a second.
+  1  2304x1536
+  2  1920x1080  (suggested)
+  3  1280x720
+  4  640x480
+Type its number (1 to 4), or press Enter for 1920x1080:
+```
+
+Press Enter for the suggested size, or type the number of another. The size is saved
+with the camera; `inspection-camera --choose-camera` asks for both again. The setting
+`CAMERA_SIZE`, if set, comes before the saved size.
+
+The suggestion is 1920×1080 (Full HD) if the camera offers it, otherwise the largest size
+that fits inside 1920×1080. It is not simply the largest size: webcams often offer sizes
+larger than their sensor really delivers, enlarged from a smaller picture, which only
+make photos bigger and slower. A webcam tested here offers 2304×1536, for example, but
+its photos at that size show less detail than at 1920×1080. When in doubt, take a photo
+at each size with the check script and compare the same detail, enlarged.
+
+What the size changes:
+
+- **Zooms.** The AI is always sent the whole photo at 1280×720 pixels at most, so a
+  larger size costs nothing extra there. But the server keeps the photo at its full
+  size, and `zoom_image` crops that, so a larger photo shows more when the AI looks
+  closer.
+- **Pictures a second.** The camera sends its pictures uncompressed, and the cable
+  carries only so many: the webcam tested here sends 10 a second at 1280×720, 5 at
+  1920×1080 and fewer than 2 at 2304×1536. The live view gets jerkier, and the first
+  photo after the camera was idle takes longer, because the server waits for 20 pictures
+  so that the exposure can settle: about 2 seconds at 10 a second, 13 seconds at
+  2304×1536. Photos after that take a fraction of a second.
+
+Sizes under 640 pixels across are left out. On Linux, the list is the camera's own. On
+Windows and macOS, cameras do not report their sizes in the same way, so the server
+asks the camera for about fifteen common sizes and lists those it gets; a size the
+camera has but that is not among the common ones is missing. If the camera sends
+another size than the one chosen, photos are refused with the reason; the server never
+uses another size instead.
+
+A camera chosen before photo sizes could be chosen is kept: the next start in a terminal
+asks only for its size. Where nobody can answer, the server stops and says so.
 
 On macOS, the first use asks whether the terminal app may use the camera; if it was
 refused, allow it in System Settings, Privacy & Security, Camera. On Windows, if the
@@ -577,6 +641,7 @@ each one on a line of its own before the command, as in `$env:CAMERA = 'fake'`:
 | Setting | What it does |
 |---|---|
 | `CAMERA` | If set, used instead of the camera chosen in the list: `fake` (the sample photos) or a real camera, as `scripts/check_camera.py` lists them |
+| `CAMERA_SIZE` | If set, used instead of the photo size chosen in the list, like `1920x1080`: one the camera offers, as `scripts/check_camera.py` lists them. Needed with a real camera in `CAMERA` |
 | `SAMPLES_DIR` | The photos the fake camera serves (default: `samples/`) |
 | `DATA_DIR` | Where photos (`captures/`) and logs (`logs/`) are kept (default: this folder) |
 | `API_KEY` | With `--http`: a secret key of your own, at least 32 characters, instead of the key file `~/.config/inspection-camera/api-key` |
@@ -593,7 +658,7 @@ The options of `inspection-camera`:
 | `--host` | With `--http`: the address to listen on (default `127.0.0.1`: this computer only; `0.0.0.0`: every network it is on) |
 | `--port` | With `--http`: the port (default 8000) |
 | `--tls-cert`, `--tls-key` | With `--http`: the certificate and its private key, for HTTPS |
-| `--choose-camera` | Show the list of cameras and choose one, also if one was chosen before; the choice is saved for later starts. Without `--http`, it stops after choosing |
+| `--choose-camera` | Show the list of cameras and choose one, and then its photo size, also if they were chosen before; the choice is saved for later starts. Without `--http`, it stops after choosing |
 
 ## On Windows
 
@@ -718,16 +783,18 @@ copied, and a photo taken through MCP with the key.
   checks, the live view
 - `inspection_camera/camera.py`: the real camera (opened and shared by the server) and
   the fake one
-- `inspection_camera/choice.py`: choosing the camera in a list, and saving the choice
+- `inspection_camera/choice.py`: choosing the camera and its photo size in lists, and
+  saving the choice
 - `inspection_camera/live.html`: the live view page
 - `inspection_camera/window.py`: the server window
 - `tests/test_server.py`: the tests of the tools; `tests/test_http.py`: over HTTP, with
   the key and with logins, and the live view; `tests/test_camera.py`: the cameras, the
-  real one against a stand-in device; `tests/test_choice.py`: choosing the camera, and
+  real one against a stand-in device; `tests/test_choice.py`: choosing the camera and
+  its photo size, and
   what the server shows at its start; `tests/test_window.py`: the server window
 - `samples/`: the photos the fake camera serves
-- `scripts/check_camera.py`: lists the cameras with their values for `CAMERA`, and takes
-  one test photo
+- `scripts/check_camera.py`: lists the cameras with their values for `CAMERA` and their
+  photo sizes, and takes one test photo
 - `scripts/keycloak.sh` and `keycloak/inspection-realm.json`: the demo login server, its
   users and roles
 - `scripts/make_certs.sh`: certificates for HTTPS between two computers

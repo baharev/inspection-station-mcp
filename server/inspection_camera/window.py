@@ -5,9 +5,9 @@
 The window runs the command a person would type, inspection-camera --http, as a separate
 program, and shows what it says; Stop ends that program. So the server is the same with
 or without the window, and a computer without a screen never needs the window. Its
-choices go into the same settings file as the terminal's (choice.py): the camera, and
-whether other computers may connect (the server's --host 0.0.0.0). Logins and HTTPS stay
-on the command line.
+choices go into the same settings file as the terminal's (choice.py): the camera, the
+size of its photos, and whether other computers may connect (the server's --host
+0.0.0.0). Logins and HTTPS stay on the command line.
 """
 
 import hashlib
@@ -29,6 +29,7 @@ except ImportError:   # Linux distributions ship it separately
              "sudo apt install python3-tk")
 
 from inspection_camera import choice as camera_choice
+from inspection_camera.camera import CameraError, camera_sizes, size_text, suggested_size
 
 PORT = 8000
 # The same file as in server.py, which is not imported here: it would load the whole server.
@@ -138,13 +139,14 @@ class Window:
         self.process = None        # the server, while it runs
         self.lines = queue.Queue()  # what it says, from the thread that reads it
         self.entries = []          # the camera list, as (setting, name)
+        self.sizes = None          # the chosen camera's photo sizes, once listed
         root.title(TITLE)
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
         frame = ttk.Frame(root, padding=12)
         frame.grid(sticky="nsew")
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(6, weight=1)
+        frame.rowconfigure(7, weight=1)
 
         ttk.Label(frame, text="Camera:").grid(row=0, column=0, sticky="w")
         self.camera = ttk.Combobox(frame, state="readonly", width=50)
@@ -153,20 +155,26 @@ class Window:
         self.look_again = ttk.Button(frame, text="Look again", command=self.find_cameras)
         self.look_again.grid(row=0, column=2)
 
+        ttk.Label(frame, text="Photo size:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        # The sizes are listed when the list opens: on Windows that opens the camera.
+        self.size = ttk.Combobox(frame, state="readonly", width=24, postcommand=self.list_sizes)
+        self.size.grid(row=1, column=1, sticky="w", padx=6, pady=(6, 0))
+        self.size.bind("<<ComboboxSelected>>", self.size_chosen)
+
         settings = camera_choice.read_settings()
         self.others = tk.BooleanVar(value=settings.get(OTHER_COMPUTERS) is True)
         self.others_box = ttk.Checkbutton(
             frame, text="Let other computers connect", variable=self.others,
             command=lambda: camera_choice.write_settings({OTHER_COMPUTERS: self.others.get()}))
-        self.others_box.grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self.others_box.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         self.start = ttk.Button(frame, text="Start", command=self.start_or_stop)
-        self.start.grid(row=2, column=0, sticky="w", pady=12)
+        self.start.grid(row=3, column=0, sticky="w", pady=12)
         self.state = ttk.Label(frame, text="Stopped.")
-        self.state.grid(row=2, column=1, columnspan=2, sticky="w", padx=6)
+        self.state.grid(row=3, column=1, columnspan=2, sticky="w", padx=6)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=3, column=0, columnspan=3, sticky="w")
+        buttons.grid(row=4, column=0, columnspan=3, sticky="w")
         self.live = ttk.Button(buttons, text="Open live view", command=lambda:
                                webbrowser.open(f"http://localhost:{PORT}/live"))
         self.live.pack(side="left")
@@ -176,15 +184,15 @@ class Window:
             ttk.Button(buttons, text="Put a shortcut on the desktop",
                        command=self.shortcut).pack(side="left")
         self.note = ttk.Label(frame, text="", wraplength=640, justify="left")
-        self.note.grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.note.grid(row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         ttk.Label(frame, text="What the server says:").grid(
-            row=5, column=0, columnspan=3, sticky="w", pady=(10, 2))
+            row=6, column=0, columnspan=3, sticky="w", pady=(10, 2))
         self.output = tk.Text(frame, height=14, width=90, wrap="word", font="TkFixedFont",
                               state="disabled")
-        self.output.grid(row=6, column=0, columnspan=3, sticky="nsew")
+        self.output.grid(row=7, column=0, columnspan=3, sticky="nsew")
         scrollbar = ttk.Scrollbar(frame, command=self.output.yview)
-        scrollbar.grid(row=6, column=3, sticky="ns")
+        scrollbar.grid(row=7, column=3, sticky="ns")
         self.output["yscrollcommand"] = scrollbar.set
         self.output.bind("<1>", lambda event: self.output.focus_set())   # for Ctrl+C
 
@@ -203,11 +211,16 @@ class Window:
         self.camera["values"] = [name for _, name in self.entries]
         devices = [device for device, _ in self.entries]
         chosen = camera_choice.saved()
+        self.sizes = None
+        self.size["values"] = []
+        self.size.set(size_text(chosen.size) if chosen and chosen.size else "")
         if chosen and chosen.device in devices:
             self.camera.current(devices.index(chosen.device))
-            self.note["text"] = ""
+            self.note["text"] = ("" if chosen.size or chosen.device == camera_choice.FAKE
+                                 else "Choose a photo size, then click Start.")
         else:   # never another camera in its place
             self.camera.set("")
+            self.size.set("")
             self.note["text"] = (
                 f"The camera chosen earlier, {chosen.name}, cannot be found. Is it plugged in? "
                 "Then click Look again. Or choose another." if chosen else
@@ -215,17 +228,66 @@ class Window:
         self.update_buttons()
 
     def camera_chosen(self, event=None) -> None:
+        """Saves the camera with its suggested photo size, which the size list can change."""
         device, name = self.entries[self.camera.current()]
-        camera_choice.save(camera_choice.Choice(device, name, ""))
+        self.sizes = None
+        self.size["values"] = []
+        self.size.set("")
+        self.note["text"] = ""
+        size = None
+        if device != camera_choice.FAKE and self.list_sizes():
+            size = suggested_size(self.sizes)
+            self.size.current(self.sizes.index(size))
+            self.note["text"] = (f"Photo size {size_text(size)} suggested: larger photos show "
+                                 "more detail when the AI zooms in, but the live view shows "
+                                 "fewer pictures a second. Change it in the list if you like.")
+        camera_choice.save(camera_choice.Choice(device, name, "", size))
+        self.update_buttons()
+
+    def list_sizes(self) -> bool:
+        """Lists the chosen camera's photo sizes, once; False if they cannot be read."""
+        if self.sizes is not None:
+            return True
+        device, name = self.entries[self.camera.current()]
+        if device == camera_choice.FAKE:
+            return False
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()
+        try:
+            sizes = camera_sizes(device)
+        except CameraError as err:
+            self.note["text"] = str(err)
+            return False
+        finally:
+            self.root.config(cursor="")
+        if not sizes:
+            self.note["text"] = (f"The camera {name} offers no photo size of at least "
+                                 "640 pixels across.")
+            return False
+        self.sizes = sizes
+        suggested = suggested_size(sizes)
+        shown = self.size.get()
+        self.size["values"] = [size_text(s) + (" (suggested)" if s == suggested else "")
+                               for s in sizes]
+        self.size.set(shown)
+        return True
+
+    def size_chosen(self, event=None) -> None:
+        device, name = self.entries[self.camera.current()]
+        size = self.sizes[self.size.current()]
+        camera_choice.save(camera_choice.Choice(device, name, "", size))
         self.note["text"] = ""
         self.update_buttons()
 
     def update_buttons(self) -> None:
         running = self.process is not None
+        camera = self.camera.current()
+        fake = camera >= 0 and self.entries[camera][0] == camera_choice.FAKE
+        ready = camera >= 0 and (fake or bool(self.size.get()))
         self.start.config(text="Stop" if running else "Start",
-                          state="normal" if running or self.camera.current() >= 0
-                          else "disabled")
+                          state="normal" if running or ready else "disabled")
         self.camera.config(state="disabled" if running else "readonly")
+        self.size.config(state="disabled" if running or camera < 0 or fake else "readonly")
         for widget in (self.look_again, self.others_box):
             widget.config(state="disabled" if running else "normal")
         self.live.config(state="normal" if running else "disabled")

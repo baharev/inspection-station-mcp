@@ -24,10 +24,10 @@ def test_a_camera_set_in_a_terminal_does_not_override_the_one_chosen_in_the_wind
 
 def test_the_window_and_the_terminal_keep_each_others_settings(tmp_path):
     choice.write_settings({window.OTHER_COMPUTERS: True})
-    choice.save(choice.Choice(*C270, ""))
+    choice.save(choice.Choice(*C270, "", (1280, 720)))
     choice.write_settings({window.OTHER_COMPUTERS: False})
-    assert choice.read_settings() == {window.OTHER_COMPUTERS: False,
-                                      "camera": C270[0], "camera_name": C270[1]}
+    assert choice.read_settings() == {window.OTHER_COMPUTERS: False, "camera": C270[0],
+                                      "camera_name": C270[1], "size": "1280x720"}
 
 
 def test_the_key_copied_is_the_one_the_server_takes(tmp_path, monkeypatch):
@@ -57,6 +57,8 @@ def screen(monkeypatch):
         pytest.skip(f"no screen ({err})")
     found = [C270]
     monkeypatch.setattr("inspection_camera.choice.list_cameras", lambda: found)
+    monkeypatch.setattr("inspection_camera.window.camera_sizes",
+                        lambda device: [(1280, 960), (1280, 720), (640, 480)])
     monkeypatch.setattr("inspection_camera.choice.sys.platform", "linux")
     yield root, found
     root.destroy()
@@ -71,6 +73,39 @@ def test_start_waits_until_a_camera_is_chosen_and_the_choice_is_saved(screen):
     w.camera_chosen()
     assert str(w.start["state"]) == "normal"
     assert (choice.saved().device, choice.saved().name) == C270
+
+
+def test_a_camera_comes_with_its_suggested_size_which_the_list_can_change(screen):
+    root, _ = screen
+    w = window.Window(root)
+    w.camera.current(0)
+    w.camera_chosen()
+    assert w.size.get() == "1280x960 (suggested)" and "suggested" in w.note["text"]
+    assert w.size["values"] == ("1280x960 (suggested)", "1280x720", "640x480")
+    assert choice.saved().size == (1280, 960)
+    w.size.current(1)
+    w.size_chosen()
+    assert choice.saved().size == (1280, 720)
+    w.camera.current(1)   # the sample photos: no size
+    w.camera_chosen()
+    assert w.size.get() == "" and str(w.size["state"]) == "disabled"
+    assert str(w.start["state"]) == "normal"
+
+
+def test_a_camera_chosen_before_sizes_existed_waits_for_a_size(screen):
+    root, _ = screen
+    choice.write_settings({"camera": C270[0], "camera_name": C270[1]})
+    w = window.Window(root)
+    assert w.camera.current() == 0 and w.size.get() == ""
+    assert str(w.start["state"]) == "disabled" and "photo size" in w.note["text"]
+    assert w.list_sizes() and w.size["values"][0] == "1280x960 (suggested)"
+
+
+def test_the_saved_size_is_shown(screen):
+    root, _ = screen
+    choice.save(choice.Choice(*C270, "", (1280, 720)))
+    w = window.Window(root)
+    assert w.size.get() == "1280x720" and str(w.start["state"]) == "normal"
 
 
 def test_a_missing_camera_is_never_replaced_by_another(screen):

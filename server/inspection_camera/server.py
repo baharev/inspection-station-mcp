@@ -1,6 +1,7 @@
 """An inspection station behind MCP: the AI takes photos, looks closer, records results.
 
-The rules live here, not in the prompt: photo size is capped, every input is checked,
+The rules live here, not in the prompt: the photo the AI is sent is capped in size (the
+full photo is kept for zooming), every input is checked,
 a "fail" (the part is taken off the line) needs a person's yes, and everything is audit-logged.
 Over the network, every request needs a secret key or a login, and a login's roles
 decide which tools its user may call.
@@ -11,8 +12,9 @@ decide which tools its user may call.
     inspection-camera --choose-camera [--http ...]
                                       # choose the camera in a menu (saved for later starts)
 
-The camera is always chosen by a person: once, in a menu at the first start over HTTP
-(or with --choose-camera), or with the setting CAMERA; see choice.py.
+The camera and the size of its photos are always chosen by a person: once, in menus at
+the first start over HTTP (or with --choose-camera), or with the settings CAMERA and
+CAMERA_SIZE; see choice.py.
 
 With --http, a browser shows what the camera sees at http(s)://<host>:<port>/live: on
 the camera's own computer at http://localhost:<port>/live without a key, from other
@@ -24,6 +26,9 @@ Environment:
                  photos) or a real camera, as scripts/check_camera.py lists them: on Linux
                  its path, such as /dev/v4l/by-id/usb-046d_0825_<serial>-video-index0;
                  on Windows and macOS (macOS not tested yet) its name or device path
+    CAMERA_SIZE  if set, comes before the photo size chosen in the menu, like 1920x1080:
+                 one of the sizes the camera offers, as scripts/check_camera.py lists them;
+                 needed with a real camera in CAMERA
     SAMPLES_DIR  photos the fake camera serves (default: samples/)
     DATA_DIR     where photos (captures/) and logs (logs/) are kept (default: this repo)
     API_KEY      with --http: the secret key every client must send, at least 32 characters;
@@ -74,7 +79,7 @@ from inspection_camera.camera import CameraError, FakeCamera, RealCamera
 REPO = Path(__file__).resolve().parent.parent
 LIVE_PAGE = Path(__file__).resolve().parent / "live.html"
 
-MAX_PHOTO = (1280, 720)   # longest photo the AI is sent, in pixels
+MAX_PHOTO = (1280, 720)   # largest photo the AI is sent, in pixels; zooms use the full photo
 ZOOM_SIZE = 1024          # longer side of an enlarged crop, in pixels
 MIN_ZOOM = 0.1            # smallest crop, as a fraction of the photo's width or height
 MAX_FINDINGS = 500        # characters
@@ -235,17 +240,19 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         except CameraError as err:
             audit(f"FAILED capture_image: {err}")
             raise ToolError(str(err)) from None
-        photo.thumbnail(MAX_PHOTO)  # size cap; keeps the aspect ratio
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         image_id, n = stamp, 1
         while (captures / f"{image_id}.jpg").exists():
             n += 1
             image_id = f"{stamp}-{n}"
-        data = as_jpeg(photo)
-        (captures / f"{image_id}.jpg").write_bytes(data)
-        audit(f"capture_image {image_id} {photo.width}x{photo.height}")
-        return [f"Photo {image_id} ({photo.width}x{photo.height} pixels)",
-                Image(data=data, format="jpeg")]
+        (captures / f"{image_id}.jpg").write_bytes(as_jpeg(photo))   # full size, for zooms
+        size = f"{photo.width}x{photo.height}"
+        photo.thumbnail(MAX_PHOTO)  # size cap; keeps the aspect ratio
+        sent = f"{photo.width}x{photo.height}"
+        audit(f"capture_image {image_id} {size}")
+        return [f"Photo {image_id} ({size} pixels" + (f", shown here at {sent}; zoom_image "
+                f"shows parts of it at full detail)" if sent != size else ")"),
+                Image(data=as_jpeg(photo), format="jpeg")]
 
     @mcp.tool(annotations=ToolAnnotations(read_only_hint=True))
     async def zoom_image(
@@ -313,7 +320,10 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
             data = await asyncio.to_thread(lambda: as_jpeg(camera.view()))
         except CameraError as err:
             return PlainTextResponse(str(err), 503)
-        return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+        headers = {"Cache-Control": "no-store"}
+        if rate := camera.rate():   # for the page: how many pictures a second the camera sends
+            headers["X-Camera-Rate"] = f"{rate:.1f}"
+        return Response(data, media_type="image/jpeg", headers=headers)
 
     def confirm_fail(image_id: str, part_id: str, verdict: str, findings: str):
         # Runs before the tool body. Only a fail asks the human, and only for a valid record.
@@ -487,8 +497,8 @@ def main() -> None:
     parser.add_argument("--tls-cert", help="with --http: certificate file, for HTTPS")
     parser.add_argument("--tls-key", help="with --http: the certificate's private key file")
     parser.add_argument("--choose-camera", action="store_true",
-                        help="choose the camera in a menu, also if one was chosen before "
-                             "(the choice is saved for later starts)")
+                        help="choose the camera and its photo size in menus, also if they "
+                             "were chosen before (the choice is saved for later starts)")
     args = parser.parse_args()
 
     # The menu needs a person at a terminal. Over stdio, the terminal carries the protocol:
@@ -498,7 +508,7 @@ def main() -> None:
     if choice.device == camera_choice.FAKE:
         camera = FakeCamera(os.environ.get("SAMPLES_DIR", REPO / "samples"))
     else:
-        camera = RealCamera(choice.device)
+        camera = RealCamera(choice.device, choice.size)
         try:
             camera.check()   # now, not at the first photo, so whoever starts it sees why
         except CameraError as err:
