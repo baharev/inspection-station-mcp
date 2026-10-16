@@ -8,6 +8,11 @@ decide which tools its user may call.
     inspection-camera                 # stdio MCP server (started by a client such as Claude Code)
     inspection-camera --http [--host 0.0.0.0] [--port 8000] [--tls-cert C --tls-key K]
                                       # over the network, at http(s)://<host>:<port>/mcp
+    inspection-camera --choose-camera [--http ...]
+                                      # choose the camera in a menu (saved for later starts)
+
+The camera is always chosen by a person: once, in a menu at the first start over HTTP
+(or with --choose-camera), or with the setting CAMERA; see choice.py.
 
 With --http, a browser shows what the camera sees at http(s)://<host>:<port>/live: on
 the camera's own computer at http://localhost:<port>/live without a key, from other
@@ -15,8 +20,9 @@ computers with the key or a login token (role viewer). The server alone opens th
 camera, so watching the live view never stops a photo from being taken.
 
 Environment:
-    CAMERA       "fake" (default) or a real camera, as scripts/check_camera.py lists them:
-                 on Linux its path, such as /dev/v4l/by-id/usb-046d_0825_<serial>-video-index0;
+    CAMERA       if set, comes before the camera chosen in the menu: "fake" (the sample
+                 photos) or a real camera, as scripts/check_camera.py lists them: on Linux
+                 its path, such as /dev/v4l/by-id/usb-046d_0825_<serial>-video-index0;
                  on Windows and macOS (macOS not tested yet) its name or device path
     SAMPLES_DIR  photos the fake camera serves (default: samples/)
     DATA_DIR     where photos (captures/) and logs (logs/) are kept (default: this repo)
@@ -37,6 +43,7 @@ import json
 import logging
 import os
 import secrets
+import socket
 import ssl
 import sys
 import time
@@ -61,6 +68,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, PlainTextResponse, Response
 
+from inspection_camera import choice as camera_choice
 from inspection_camera.camera import CameraError, FakeCamera, RealCamera
 
 REPO = Path(__file__).resolve().parent.parent
@@ -423,6 +431,49 @@ def oauth_auth(issuer: str, server_url: str, signing_key=None) -> dict:
             "token_verifier": JwtVerifier(issuer, server_url, signing_key)}
 
 
+def network_address() -> str | None:
+    """This computer's address on its network, as other computers reach it, if it has one."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))   # sends nothing: only picks the network to use
+            return s.getsockname()[0]
+    except OSError:
+        return None
+
+
+def next_steps(host: str, port: int, scheme: str, key_file: bool,
+               address: str | None = None, mcp_url: str | None = None) -> list[str]:
+    """What the server prints at its start over HTTP: where to find it, how to connect.
+
+    key_file: clients use the key file (not API_KEY, not logins), so the Claude Code
+    command can read the key from it. address: this computer's address on its network.
+    mcp_url: the server's address as set for logins (SERVER_URL), if any.
+    """
+    lines = []
+    if host in ("127.0.0.1", "localhost", "::1"):
+        here, there = "localhost", None
+        lines.append("Only this computer can connect. To let other computers in, "
+                     "start with --host 0.0.0.0 too.")
+    elif host in ("0.0.0.0", "::"):
+        here, there = "localhost", address or "<this computer's address>"
+    else:
+        here = there = host
+    lines.append(f"Live view: {scheme}://{here}:{port}/live")
+    if there and there != here:
+        lines.append(f"           {scheme}://{there}:{port}/live from other computers, "
+                     "with the secret key or a login")
+    url = mcp_url or f"{scheme}://{there or here}:{port}/mcp"
+    lines.append(f"MCP address: {url}")
+    if key_file:   # the commands read the key from the key file, so nobody types it
+        read_key = {"Linux, macOS:": "$(cat ~/.config/inspection-camera/api-key)",
+                    "PowerShell:": "$(Get-Content $HOME\\.config\\inspection-camera\\api-key)"}
+        lines.append("To connect Claude Code, run this once in the folder where you use it"
+                     + (" (on another computer, copy the key file there first):" if there else ":"))
+        lines += [f"  {shell:14}claude mcp add -s local --transport http inspection-camera {url} "
+                  f'--header "Authorization: Bearer {key}"' for shell, key in read_key.items()]
+    return lines
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="The inspection station as an MCP server.")
     parser.add_argument("--http", action="store_true",
@@ -435,22 +486,35 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--tls-cert", help="with --http: certificate file, for HTTPS")
     parser.add_argument("--tls-key", help="with --http: the certificate's private key file")
+    parser.add_argument("--choose-camera", action="store_true",
+                        help="choose the camera in a menu, also if one was chosen before "
+                             "(the choice is saved for later starts)")
     args = parser.parse_args()
 
-    device = os.environ.get("CAMERA", "fake")
-    if device == "fake":
+    # The menu needs a person at a terminal. Over stdio, the terminal carries the protocol:
+    # there, the menu is shown only with --choose-camera, and the server then stops.
+    choice = camera_choice.for_start(
+        args.choose_camera, can_ask=sys.stdin.isatty() and (args.http or args.choose_camera))
+    if choice.device == camera_choice.FAKE:
         camera = FakeCamera(os.environ.get("SAMPLES_DIR", REPO / "samples"))
     else:
-        camera = RealCamera(device)
+        camera = RealCamera(choice.device)
         try:
             camera.check()   # now, not at the first photo, so whoever starts it sees why
         except CameraError as err:
-            sys.exit(str(err))
+            if choice.source == camera_choice.FROM_CAMERA:
+                sys.exit(str(err))
+            sys.exit(f"The camera chosen earlier, {choice.name}, cannot be found. Is it "
+                     f"plugged in? Or choose another: {camera_choice.CHOOSE}")
     data_dir = os.environ.get("DATA_DIR", REPO)
 
+    if args.choose_camera and not args.http:
+        return   # chosen and saved: Claude Code starts the server with it from now on
     if not args.http:
         create_server(camera, data_dir).run()
         return
+    print(choice.describe(), file=sys.stderr)
+    server_url = None
     if issuer := os.environ.get("OAUTH_ISSUER", ""):
         if os.environ.get("API_KEY"):
             sys.exit("Set either API_KEY or OAUTH_ISSUER, not both.")
@@ -461,10 +525,10 @@ def main() -> None:
     else:
         auth = key_auth(secret_key())
     app = create_server(camera, data_dir, **auth).streamable_http_app(host=args.host)
-    scheme = "https" if args.tls_cert else "http"
-    listens_here = args.host in ("127.0.0.1", "localhost", "::1", "0.0.0.0", "::")
-    print(f"Live view: {scheme}://{'localhost' if listens_here else args.host}:{args.port}/live",
-          file=sys.stderr)
+    for line in next_steps(args.host, args.port, "https" if args.tls_cert else "http",
+                           key_file=not issuer and not os.environ.get("API_KEY", "").strip(),
+                           address=network_address(), mcp_url=server_url):
+        print(line, file=sys.stderr)
     # The live view asks for a frame five times a second; keep those out of the terminal.
     logging.getLogger("uvicorn.access").addFilter(
         lambda record: "/live/frame.jpg" not in record.getMessage())

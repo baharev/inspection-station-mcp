@@ -40,9 +40,15 @@ def _linux_name(path: Path) -> str:
     """Maker and model as udev knows them, and whether the camera is built in."""
     import subprocess
 
-    out = subprocess.run(["udevadm", "info", "--query=property", f"--name={path.resolve()}"],
-                         capture_output=True, text=True).stdout
-    props = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    def properties(*where):
+        out = subprocess.run(["udevadm", "info", "--query=property", *where],
+                             capture_output=True, text=True).stdout
+        return dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+
+    # Some systems keep the names from the database (lsusb's list) only on the USB device,
+    # one level above the video device.
+    usb_device = Path(f"/sys/class/video4linux/{path.resolve().name}/device/..").resolve()
+    props = properties(f"--path={usb_device}") | properties(f"--name={path.resolve()}")
 
     def text(key):  # the database name (lsusb's list), else the device's own, \x-escaped
         if value := props.get(f"{key}_FROM_DATABASE"):

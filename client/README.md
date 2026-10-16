@@ -9,11 +9,43 @@ photo; no part is marked as failed without your yes.
 A self-built demonstration of connecting a device to AI models through the
 [Model Context Protocol](https://modelcontextprotocol.io) (MCP), the standard way to
 plug tools, data and devices into AI applications. The camera sits behind an MCP server,
-in the companion repository `mcp-server`; this repository holds the programs that use
-it: this app, and a ready-made setup for Claude Code. The app is small on purpose: about
+in the companion repository `mcp-server`; this repository holds a desktop app that uses
+it. Claude Code can use the server too, without this app: see the `mcp-server` README.
+The app is small on purpose: about
 920 lines of Python, using the official MCP and Anthropic libraries.
 
 Author: [Ali Baharev](https://baharev.info/)
+
+## Quick start
+
+You need two things first:
+
+- **The camera server, running on this computer**: see the Quick start of the
+  `mcp-server` README. Its sample photos work without a camera.
+- **A Claude API key** in the file `~/.config/anthropic/api-key`: see
+  [Your Claude API key](#your-claude-api-key).
+
+Then, on Linux, in a terminal, in this repository's folder:
+
+```
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+inspection-station
+```
+
+On Ubuntu and Debian, `python3 -m venv` needs `sudo apt install python3-venv` once. On
+Windows, in PowerShell, in this repository's folder:
+
+```
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e .
+inspection-station
+```
+
+In the window, ask for example: "Take a photo. What does the gauge read?" The rest of
+this README explains each step, other setups, and logins.
 
 ## What an inspection station is
 
@@ -86,78 +118,70 @@ tested on Linux and Windows; macOS is not tested yet. The commands are for Linux
 should work the same in the macOS Terminal; for PowerShell, see
 [On Windows](#on-windows).
 
-You need both repositories, side by side in one folder, and one Python environment that
-holds them both: the camera server from `mcp-server`, and this app. There are two ways
-to make that environment; use one of them, not both:
+The app and the camera server are separate programs. The app talks to the server only
+over the network, through MCP, even when both run on one computer; it needs no part of
+the server installed beside it. So each has a Python environment of its own: the
+server's is made as its README describes, and the app's as below. There are two ways to
+make the app's environment; use one of them, not both:
 
 - [With a virtual environment](#with-a-virtual-environment), if Python 3.13 or later
-  is installed on your computer. The environment is a folder, `station-env`, next to the
-  two repositories.
+  is installed on your computer. The environment is a folder, `.venv`, in this
+  repository's folder.
 - [With conda](#with-conda), if you use Miniconda or Anaconda, which bring their own
   Python. Conda keeps the environment in a place of its own and you call it by its name,
-  `mcp`; there is no `station-env` folder.
+  `station`.
 
 ### With a virtual environment
 
-In a terminal, in the folder that holds both repositories:
+In a terminal, in this repository's folder:
 
 ```
-python3 -m venv station-env
-source station-env/bin/activate
-pip install -e "./mcp-server[test]"
-pip install -e "./mcp-client[test]"
-cd mcp-client
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[test]"
 pytest -q
 ```
 
-The first line makes the folder `station-env`, with a Python environment in it (if
+The first line makes the folder `.venv`, with a Python environment in it (if
 `python3 --version` shows a version older than 3.13, write `python3.14` or `python3.13`
-instead of `python3`); the second activates it; the rest installs the server and the app
-into it and runs the app's tests. **In every new terminal**, activate it again before
-starting anything, in the folder that holds both repositories:
+instead of `python3`; on Ubuntu and Debian, it needs `sudo apt install python3-venv`
+once); the second activates it; the rest installs the app into it and runs its tests.
+**In every new terminal**, activate it again before starting the app, in this
+repository's folder:
 
 ```
-source station-env/bin/activate
+source .venv/bin/activate
 ```
 
 ### With conda
 
-In a terminal, in the folder that holds both repositories:
+In a terminal, in this repository's folder:
 
 ```
-conda create -n mcp python=3.14
-conda activate mcp
-pip install -e "./mcp-server[test]"
-pip install -e "./mcp-client[test]"
-cd mcp-client
+conda create -n station python=3.14
+conda activate station
+pip install -e ".[test]"
 pytest -q
 ```
 
-The first line makes a conda environment called `mcp`, with Python 3.14 in it; the
-second activates it; the rest installs the server and the app into it and runs the
-app's tests. The first time, conda may ask whether you accept the terms of service of
-Anaconda's package channels (answer `a` to each question), then `Proceed ([y]/n)?`. If
-you already made the environment `mcp` with the `mcp-server` README's conda steps, leave
-out the first line: the app goes into the same environment. **In every new terminal**,
-activate it again before starting anything:
+The first line makes a conda environment called `station`, with Python 3.14 in it; the
+second activates it; the rest installs the app into it and runs its tests. The first
+time, conda may ask whether you accept the terms of service of Anaconda's package
+channels (answer `a` to each question), then `Proceed ([y]/n)?`. **In every new
+terminal**, activate it again before starting the app:
 
 ```
-conda activate mcp
+conda activate station
 ```
 
-Activating conda's own `base` environment is not enough: the commands are in `mcp`.
+Activating conda's own `base` environment is not enough: the app is in `station`.
 
 ### What the install adds
 
-The tests use the real camera server with a fake camera, and a stand-in for Claude that
-follows a script, so they need no camera, no key and no internet. The install adds two
-commands: `inspection-camera` starts the camera server, `inspection-station` starts the
-app. They exist only inside the environment: in a terminal where it is not active, the
-answer is "command not found".
-
-On a computer that only runs the app, the camera being on another computer, the server
-is not needed: `pip install -e "./mcp-client"` instead of both install lines is enough
-there (the tests then cannot run, as they use the server).
+The command `inspection-station`, which starts the app. It exists only inside the
+environment: in a terminal where it is not active, the answer is "command not found".
+The tests use stand-ins for the camera server and for Claude, so they need no server, no
+camera, no key and no internet.
 
 ## Your Claude API key
 
@@ -187,35 +211,41 @@ well.
 
 ## How to start it
 
-Every terminal below needs the environment active first, the way you installed it:
-`source station-env/bin/activate` in the folder that holds both repositories for a
-[virtual environment](#with-a-virtual-environment), or `conda activate mcp` for
-[conda](#with-conda).
+Every terminal below needs an environment active first: for the app, its own, the way
+you installed it (`source .venv/bin/activate` in this repository's folder, or
+`conda activate station`); for the camera server, the server's, as its README describes.
 
 | Your situation | What you start | See |
 |---|---|---|
 | Try it on one computer, no camera needed | The camera server with its fake camera, then the app | [Try it on one computer](#try-it-on-one-computer) |
 | The camera on one computer, the app on another | The camera server on the station computer, the app on yours | [The camera on another computer](#the-camera-on-another-computer) |
 | Each person logs in with their own name and role, instead of one shared key | A login server, the camera server with logins, then the app with `--login` | [Logins with roles](#logins-with-roles) |
-| You want Claude Code instead of this app | Claude Code, in this repository's folder | [With Claude Code instead](#with-claude-code-instead) |
+| You want Claude Code instead of this app | Nothing from this repository | [With Claude Code instead](#with-claude-code-instead) |
 
 ## Try it on one computer
 
-Without a camera, the server uses a fake one, which serves stored photos of the demo
+Without a camera, the server can use a fake one, which serves stored photos of the demo
 scenes (a gauge, packs, a scale, a tool tray, watches), a new one for every photo taken.
 
-**In a first terminal**, with the environment active, start the camera server, and
-leave it running:
+**In a first terminal**, with the server's environment active, in the folder
+`mcp-server`, start the camera server, and leave it running:
 
 ```
 inspection-camera --http
 ```
 
-It is ready when it shows "Uvicorn running on http://127.0.0.1:8000". Its first line
-says where its secret key is: `~/.config/inspection-camera/api-key`, made at its first
-start. The app reads the same file, so there is nothing to copy on one computer.
+(Or start it with a click: `inspection-server-window` opens the server window, as
+described in the `mcp-server` README. The steps below are for the terminal.)
 
-**In a second terminal**, with the environment active, start the app:
+The first time, it lists the cameras it finds and asks you to type the number of one:
+type the number of the last entry, "Sample photos, no camera", and press Enter (or that
+of a real camera, to use it). The server remembers the choice; to choose again, start it
+with `inspection-camera --http --choose-camera`. It is ready when it shows "Uvicorn
+running on http://127.0.0.1:8000". Above that, it says where its secret key is:
+`~/.config/inspection-camera/api-key`, made at its first start. The app reads the same
+file, so there is nothing to copy on one computer.
+
+**In a second terminal**, with the app's environment active, start the app:
 
 ```
 inspection-station
@@ -238,9 +268,9 @@ the server with `--http --host 0.0.0.0`, and copy its key file to the app's comp
 the same place: `~/.config/inspection-camera/api-key`. That section's steps for Claude
 Code are not needed here.
 
-On the app's computer, in a terminal with the environment active, start the app with the
-station computer's address (here 192.168.0.20; on Linux, `hostname -I` on the station
-computer shows it):
+On the app's computer, in a terminal with the app's environment active, start the app
+with the station computer's address (here 192.168.0.20; on Linux, `hostname -I` on the
+station computer shows it):
 
 ```
 inspection-station --server http://192.168.0.20:8000/mcp
@@ -271,16 +301,16 @@ login server:
 scripts/keycloak.sh
 ```
 
-It is ready when it shows "Listening on". In a second terminal with the environment
-active, in the folder `mcp-server`, start the camera server with logins instead of its
-key:
+It is ready when it shows "Listening on". In a second terminal with the server's
+environment active, in the folder `mcp-server`, start the camera server with logins
+instead of its key:
 
 ```
 OAUTH_ISSUER=http://localhost:8080/realms/inspection SERVER_URL=http://localhost:8000/mcp \
     inspection-camera --http
 ```
 
-In a third terminal with the environment active, start the app:
+In a third terminal with the app's environment active, start the app:
 
 ```
 inspection-station --login
@@ -325,45 +355,31 @@ must be the same, letter for letter.
 
 ## With Claude Code instead
 
-This folder's `.mcp.json` tells Claude Code how to start the camera server with the fake
-camera, in the background, whenever Claude Code starts here. Claude Code finds the
-command `inspection-camera` only when it is started with the environment active. In a
-terminal with the environment active, in this repository's folder `mcp-client`:
-
-```
-claude
-```
-
-Approve the `inspection-camera` server when Claude Code asks. Type `/mcp`: it should
-show `inspection-camera` as connected. Then ask, for example: "Take a photo of the
-inspection station. What does the gauge read?" In Claude Code, the fail confirmation is
-a question in the terminal, with the box "Mark this part as FAILED?" and the choices
-"Accept" and "Decline": "Accept" with the box ticked marks the part as failed;
-"Decline" marks it as unsure. For a real camera, or
-a camera on another computer, see the `mcp-server` README.
+Claude Code connects to the camera server directly, so it needs nothing from this
+repository: the `mcp-server` README shows how, in its Quick start and in "Try it on one
+computer".
 
 ## On Windows
 
-**With a virtual environment**: the same steps in PowerShell, in the folder that holds
-both repositories:
+**With a virtual environment**: the same steps in PowerShell, in this repository's
+folder:
 
 ```
-python -m venv station-env
-station-env\Scripts\Activate.ps1
-pip install -e "./mcp-server[test]"
-pip install -e "./mcp-client[test]"
-cd mcp-client
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[test]"
 pytest -q
 ```
 
 If activating fails because running scripts is disabled, allow your own scripts once
 with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. In every new PowerShell
-window, activate the environment again, in the folder that holds both repositories, with
-`station-env\Scripts\Activate.ps1`.
+window, `cd` to this repository's folder and activate the environment again with
+`.venv\Scripts\Activate.ps1`.
 
 **With Miniconda**: open "Anaconda PowerShell Prompt" from the Start menu (not "Anaconda
-Prompt", the older Command Prompt), and run the commands of [With conda](#with-conda)
-there, unchanged; in every new Anaconda PowerShell Prompt, `conda activate mcp`.
+Prompt", the older Command Prompt), `cd` to this repository's folder, and run the
+commands of [With conda](#with-conda) there, unchanged; in every new Anaconda PowerShell
+Prompt, `conda activate station`.
 
 The Claude API key goes into `$HOME\.config\anthropic\api-key`:
 
@@ -380,8 +396,8 @@ instead, which the app does not read.
 A setting written in front of a command, as in `OAUTH_ISSUER=... inspection-camera
 --http` in [Logins with roles](#logins-with-roles), is a line of its own in PowerShell,
 starting with `$env:`; it holds until the window is closed. A `\` at the end of a line
-means the command goes on in the next one. For the camera server with logins, in the
-folder `mcp-server`:
+means the command goes on in the next one. For the camera server with logins, with the
+server's environment active, in the folder `mcp-server`:
 
 ```
 $env:OAUTH_ISSUER = 'http://localhost:8080/realms/inspection'
@@ -397,7 +413,7 @@ Miniconda, from fresh copies of both repositories: the tests; the app with the f
 camera and the key file (the live view, answers, the confirmation dialog); logins with
 the login server on a Linux computer, over HTTP and over HTTPS with `--trust` (a viewer
 refused recording, an inspector's fail confirmed, the login renewed without asking
-again); and Claude Code started in this folder.
+again).
 
 ## Files
 
@@ -405,11 +421,12 @@ again); and Claude Code started in this folder.
   and the camera server, the costs, and errors in plain words
 - `inspection_station/app.py`: the window: live view, conversation, confirmation dialog
 - `inspection_station/login.py`: the login in the browser (the MCP SDK does the rest)
-- `tests/test_station.py`: the loop, against the real camera server with its fake camera
-  and a stand-in for Claude
+- `tests/test_station.py`: the loop, against stand-ins for the camera server and for
+  Claude
+- `tests/stand_in_server.py`: the stand-in for the camera server: the same tools, as
+  any camera server offers them over MCP
 - `tests/test_login.py`: the app's part of the login, with a stand-in for the browser
 - `tests/test_dialog.py`: the confirmation dialog: Enter never marks a part as failed
-- `.mcp.json`: the camera server with the fake camera, for Claude Code in this folder
 - `docs/setup.svg`: the figure of the setup
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)

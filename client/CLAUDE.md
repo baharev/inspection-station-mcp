@@ -1,11 +1,11 @@
-# MCP inspection camera: the desktop app and the Claude Code side
+# MCP inspection camera: the desktop app
 
 An MCP server (Model Context Protocol, the standard way to plug tools, data and devices
 into an AI application such as Claude Code) lets the AI take photos with a camera, look
 closer at part of a photo, and record inspection results. The server, with its demo
 login server and certificate script, is in a repository of its own, `mcp-server`. This
-repository holds the programs that use it: a desktop app (PySide6), and the setup for
-Claude Code.
+repository holds a desktop app (PySide6) that uses it. Claude Code connects to the
+server directly, as the server's README shows; nothing for it lives here.
 
 ## What is here
 
@@ -14,13 +14,12 @@ Claude Code.
   server (MCP `Client` over HTTP with the server's key); `app.py` is the window, which
   runs the station in a background thread with its own asyncio loop and gets each step
   as a Qt signal. The server's fail confirmation (MCP elicitation) becomes a dialog.
-- `tests/test_station.py`: the loop against the real server in-process (fake camera)
-  and a scripted stand-in for Claude; needs `mcp-server` installed in the environment.
-- `.mcp.json`: registers the server for Claude Code in this folder. It starts the
-  server's command `inspection-camera` (installed from `mcp-server` into the active
-  Python environment) with the fake camera, which serves stored photos instead of a real
-  camera. A private setting (`claude mcp add -s local ...`) overrides it, for example to
-  reach a server with a real camera on another computer.
+- `tests/test_station.py`: the loop against a stand-in for the camera server
+  (`tests/stand_in_server.py`, in-process, the same tools) and a scripted stand-in for
+  Claude. The app and the server are separate programs: the app never imports the
+  server's code, so the server could be rewritten in another language without changing
+  the app. What they share is the MCP interface (tool names, arguments, the text
+  "Photo <ID> ...", the fail question) and the key file's path.
 
 ## Rules
 

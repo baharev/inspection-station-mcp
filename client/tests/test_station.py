@@ -1,7 +1,7 @@
 """The loop between Claude and the camera server, without the window.
 
 Claude is replaced by a script of answers (no cost, same result every time); the camera
-server is the real one, in-process, with its fake camera.
+server by a stand-in with the same tools (stand_in_server.py), in-process.
 """
 
 import json
@@ -9,12 +9,10 @@ import json
 import pytest
 from anthropic.types import Message
 from mcp import Client
-from PIL import Image
 
-from inspection_camera.camera import FakeCamera
-from inspection_camera.server import create_server
 from inspection_station.station import (Answer, CameraServerRefused, Done, Note, Question,
                                         Station, ToolCall, ToolResult, describe)
+from stand_in_server import stand_in_server
 
 pytestmark = pytest.mark.anyio
 
@@ -27,11 +25,13 @@ def anyio_backend():
 
 
 @pytest.fixture
-def server(tmp_path):
-    samples = tmp_path / "samples"
-    samples.mkdir()
-    Image.new("RGB", (1280, 720), (200, 200, 200)).save(samples / "a.jpg")
-    return create_server(FakeCamera(samples), tmp_path / "data")
+def stand_in():
+    return stand_in_server()
+
+
+@pytest.fixture
+def server(stand_in):
+    return stand_in[0]
 
 
 def reply(*blocks, stop="tool_use", usage=None):
@@ -128,11 +128,12 @@ async def test_a_refusal_by_the_server_goes_back_to_claude(server):
     assert claude.requests[2]["messages"][-1]["content"][0]["is_error"] is True
 
 
-@pytest.mark.parametrize("answer, verdict, confirmation", [
-    (True, "fail", "yes"), (False, "unsure", "no"), (None, "unsure", "no answer"),
+@pytest.mark.parametrize("answer, server_got", [
+    (True, True), (False, False), (None, "cancel"),
 ], ids=["yes", "no", "closed"])
-async def test_a_fail_needs_the_persons_yes_else_it_is_unsure(server, tmp_path, answer,
-                                                              verdict, confirmation):
+async def test_the_person_answers_the_servers_question_about_a_fail(stand_in, answer,
+                                                                    server_got):
+    server, answers = stand_in
     claude = ScriptedClaude(
         reply(tool("capture_image")),
         lambda request: reply(tool("record_inspection", 2, image_id=last_photo(request),
@@ -143,13 +144,11 @@ async def test_a_fail_needs_the_persons_yes_else_it_is_unsure(server, tmp_path, 
     steps, asked = await run(station, "Is the tray complete? Record it.", [answer])
 
     assert len(asked) == 1
-    assert "part tray-07" in asked[0].message and "FAILED" in asked[0].message
+    assert "tray-07" in asked[0].message and "FAILED" in asked[0].message
     assert asked[0].picture[:2] == b"\xff\xd8"   # the photo is shown with the question
     result = [s for s in steps if isinstance(s, ToolResult)][-1]
     assert not result.refused
-    [line] = (tmp_path / "data" / "logs" / "inspections.jsonl").read_text().splitlines()
-    assert json.loads(line)["verdict"] == verdict
-    assert json.loads(line)["fail_confirmation"] == confirmation
+    assert answers == [server_got]
 
 
 async def test_cost_counts_every_step(server):

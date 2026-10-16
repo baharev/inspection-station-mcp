@@ -20,6 +20,9 @@ dependencies = [
 [project.scripts]
 inspection-camera = "inspection_camera.server:main"
 
+[project.gui-scripts]   # on Windows: a program that opens no console window
+inspection-server-window = "inspection_camera.window:main"
+
 [project.optional-dependencies]
 test = ["pytest", "anyio"]
 

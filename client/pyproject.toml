@@ -18,7 +18,7 @@ dependencies = [
 inspection-station = "inspection_station.app:main"
 
 [project.optional-dependencies]
-# The tests also need the camera server (repository mcp-server) installed.
+# The tests need no camera server: they use a stand-in (tests/stand_in_server.py).
 test = ["pytest", "anyio", "pillow"]
 
 [tool.setuptools]

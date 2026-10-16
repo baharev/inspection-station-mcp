@@ -4,8 +4,9 @@ An MCP server (Model Context Protocol, the standard way to plug tools, data and 
 into an AI application such as Claude Code) that lets the AI take photos with a camera,
 look closer at part of a photo, and record inspection results. The safety rules are
 enforced in the server, not in the prompt. This repository holds the server, with its
-demo login server and a script for HTTPS certificates; how Claude Code connects to it
-is in a repository of its own, `mcp-client`.
+demo login server and a script for HTTPS certificates. Claude Code connects to it
+directly (the README shows how); the desktop app that uses it is in a repository of its
+own, `mcp-client`, and never imports this code.
 
 ## Environment
 
@@ -13,14 +14,23 @@ is in a repository of its own, `mcp-client`.
   virtual environment of its own:
   `pip install -e ".[test]"`, then `pytest -q`. Add a dependency to `pyproject.toml` in
   the same step as installing it. Never install into the system Python.
-- The fake camera (`CAMERA=fake`) serves the photos in `samples/`; the tests draw their
-  own. A real camera is always chosen by name, never by a number (numbers change when
-  devices are plugged in): on Linux a V4L2 webcam by its stable `/dev/v4l/by-id/` path;
-  on Windows (through DirectShow) and macOS (not tested yet) by its name or device path.
-  `python scripts/check_camera.py` lists the cameras.
+- The fake camera (`CAMERA=fake`, or "Sample photos" in the camera list) serves the
+  photos in `samples/`; the tests draw their own. The camera is always chosen by a
+  person, never guessed: by its number in a list the server shows in a terminal
+  (`choice.py`; saved in `~/.config/inspection-camera/settings.json`, changed with
+  `--choose-camera`), or with `CAMERA`, which comes first. What is saved is the camera's
+  name or path, never the number (numbers change when devices are plugged in): on Linux
+  a V4L2 webcam by its stable `/dev/v4l/by-id/` path; on Windows (through DirectShow) and
+  macOS (not tested yet) by its name, or its device path for two of the same model.
+  Without a person to answer the list (stdio, a service), the server stops and says why.
+  `python scripts/check_camera.py` lists the cameras with their values for `CAMERA`.
 - The server alone opens the camera: a background thread reads frames while photos or the
   live view (`/live`, with `--http`) are used, and releases the camera a minute later.
   Meanwhile no other program can open it; the live view replaces separate camera viewers.
+- The server window (`inspection-server-window`, `inspection_camera/window.py`) runs
+  `inspection-camera --http` as a separate program and shows its output; Stop ends it.
+  Tkinter is imported only there: the server never depends on the window, and a computer
+  without a screen never needs it. Its choices live in the same settings file.
 - Containers: podman (the demo login server, `scripts/keycloak.sh`).
 
 ## How to write the code
