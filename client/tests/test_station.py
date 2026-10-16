@@ -128,9 +128,11 @@ async def test_a_refusal_by_the_server_goes_back_to_claude(server):
     assert claude.requests[2]["messages"][-1]["content"][0]["is_error"] is True
 
 
-@pytest.mark.parametrize("answer, recorded", [(True, True), (False, False), (None, False)])
-async def test_a_fail_is_recorded_only_when_the_person_says_yes(server, tmp_path, answer,
-                                                                recorded):
+@pytest.mark.parametrize("answer, verdict, confirmation", [
+    (True, "fail", "yes"), (False, "unsure", "no"), (None, "unsure", "no answer"),
+], ids=["yes", "no", "closed"])
+async def test_a_fail_needs_the_persons_yes_else_it_is_unsure(server, tmp_path, answer,
+                                                              verdict, confirmation):
     claude = ScriptedClaude(
         reply(tool("capture_image")),
         lambda request: reply(tool("record_inspection", 2, image_id=last_photo(request),
@@ -141,11 +143,13 @@ async def test_a_fail_is_recorded_only_when_the_person_says_yes(server, tmp_path
     steps, asked = await run(station, "Is the tray complete? Record it.", [answer])
 
     assert len(asked) == 1
-    assert "tray-07 as FAILED" in asked[0].message
+    assert "part tray-07" in asked[0].message and "FAILED" in asked[0].message
     assert asked[0].picture[:2] == b"\xff\xd8"   # the photo is shown with the question
-    record = [s for s in steps if isinstance(s, ToolResult)][-1]
-    assert record.refused is not recorded
-    assert (tmp_path / "data" / "logs" / "inspections.jsonl").exists() is recorded
+    result = [s for s in steps if isinstance(s, ToolResult)][-1]
+    assert not result.refused
+    [line] = (tmp_path / "data" / "logs" / "inspections.jsonl").read_text().splitlines()
+    assert json.loads(line)["verdict"] == verdict
+    assert json.loads(line)["fail_confirmation"] == confirmation
 
 
 async def test_cost_counts_every_step(server):

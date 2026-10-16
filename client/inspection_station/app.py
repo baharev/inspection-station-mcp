@@ -1,6 +1,6 @@
 """The window: the camera's live view on the left, the conversation with Claude on the right.
 
-    inspection-station [--server http://<camera computer>:8000/mcp]
+    inspection-station [--server http://<station computer>:8000/mcp]
 
 The camera server must be running with --http. Keys are read from files, never typed:
 the camera server's key from ~/.config/inspection-camera/api-key (or API_KEY), Claude's
@@ -149,8 +149,8 @@ class ConfirmDialog(QDialog):
                                                    Qt.TransformationMode.SmoothTransformation))
             layout.addWidget(picture)
         buttons = QDialogButtonBox()
-        buttons.addButton("Record as failed", QDialogButtonBox.ButtonRole.YesRole)
-        no = buttons.addButton("Don't record", QDialogButtonBox.ButtonRole.NoRole)
+        buttons.addButton("Yes, mark it as failed", QDialogButtonBox.ButtonRole.YesRole)
+        no = buttons.addButton("No, put it aside", QDialogButtonBox.ButtonRole.NoRole)
         no.setDefault(True)   # Enter never scraps a part by accident
         buttons.clicked.connect(lambda button: self.done(1 if button is not no else 2))
         layout.addWidget(buttons)
@@ -348,7 +348,8 @@ def result_in_words(result: ToolResult) -> str:
     if result.name == "record_inspection":
         try:
             record = json.loads(result.text)
-            who = " (confirmed by a person)" if record.get("confirmed_by_human") else ""
+            confirmed = record.get("fail_confirmation") == "yes"
+            who = " (confirmed by a person)" if confirmed else ""
             note = f"<br>{html.escape(record['note'])}" if record.get("note") else ""
             return f"Recorded: part {html.escape(record['part_id'])} " \
                    f"{html.escape(record['verdict']).upper()}{who}{note}"

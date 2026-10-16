@@ -184,7 +184,7 @@ async def test_pass_is_recorded_without_asking_anyone(server, tmp_path):
     [line] = log_lines(tmp_path, "inspections.jsonl")
     assert json.loads(line) | {"time": None} == {
         "time": None, "image_id": image_id, "part_id": "tray-07", "verdict": "pass",
-        "findings": "All three tools present.", "confirmed_by_human": False,
+        "findings": "All three tools present.", "fail_confirmation": "not asked",
         "recorded_by": "local"}
 
 
@@ -196,7 +196,7 @@ async def test_unsure_is_recorded_and_says_a_person_should_look(server):
     assert "a person should look" in result.structured_content["note"]
 
 
-# --- record_inspection: a fail needs a human's yes ---------------------------------
+# --- record_inspection: a fail needs a person's yes, else it is unsure -------------
 
 async def test_fail_is_recorded_when_the_human_says_yes(server, tmp_path):
     operator = human("yes")
@@ -205,22 +205,30 @@ async def test_fail_is_recorded_when_the_human_says_yes(server, tmp_path):
         result = await client.call_tool(
             "record_inspection", record(image_id, "fail", findings="Pack torn at the top."))
     assert not result.is_error
-    assert result.structured_content["confirmed_by_human"] is True
-    assert "tray-07 as FAILED" in operator.asked[0] and "torn" in operator.asked[0]
+    assert result.structured_content["verdict"] == "fail"
+    assert result.structured_content["fail_confirmation"] == "yes"
+    assert "part tray-07" in operator.asked[0] and "torn" in operator.asked[0]
+    assert "FAILED" in operator.asked[0] and "UNSURE" in operator.asked[0]
     assert len(log_lines(tmp_path, "inspections.jsonl")) == 1
-    assert "(confirmed by human)" in log_lines(tmp_path, "audit.log")[-1]
+    assert "tray-07 fail" in log_lines(tmp_path, "audit.log")[-1]
+    assert "(fail confirmation: yes)" in log_lines(tmp_path, "audit.log")[-1]
 
 
-@pytest.mark.parametrize("answer, how", [
-    ("no", "said no"), ("decline", "decline"), ("cancel", "cancel"),
+@pytest.mark.parametrize("answer, confirmation", [
+    ("no", "no"), ("decline", "declined"), ("cancel", "no answer"),
 ], ids=["says no", "refuses to answer", "closes the dialog"])
-async def test_fail_is_not_recorded_without_a_yes(server, tmp_path, answer, how):
+async def test_fail_without_a_yes_is_recorded_as_unsure(server, tmp_path, answer,
+                                                         confirmation):
     async with Client(server, elicitation_callback=human(answer)) as client:
         image_id = await take_photo(client)
         result = await client.call_tool("record_inspection", record(image_id, "fail"))
-    assert result.is_error
-    assert log_lines(tmp_path, "inspections.jsonl") == []
-    assert f"fail not confirmed ({how}) tray-07" in log_lines(tmp_path, "audit.log")[-1]
+    assert not result.is_error
+    assert "a person should look" in result.structured_content["note"]
+    [line] = log_lines(tmp_path, "inspections.jsonl")
+    assert json.loads(line)["verdict"] == "unsure"
+    assert json.loads(line)["fail_confirmation"] == confirmation
+    assert f"tray-07 unsure {image_id} (fail confirmation: {confirmation})" \
+        in log_lines(tmp_path, "audit.log")[-1]
 
 
 async def test_human_is_not_asked_about_an_invalid_fail(server):

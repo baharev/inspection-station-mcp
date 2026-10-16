@@ -18,13 +18,51 @@ a ready-made `.mcp.json` for Claude Code with the fake camera. To try it, see
 
 Author: [Ali Baharev](https://baharev.info/)
 
+## What an inspection station is
+
+A factory makes parts: a filled box, a tray of tools, a pack of food, a gauge. Before a
+part moves on to the next machine or to the customer, someone checks it. That check is
+the inspection, and the place where it happens is the inspection station: a table or a
+spot on the conveyor belt, with a camera and good lighting above it, and usually a screen
+for a worker, the operator.
+
+Each part gets one of three outcomes:
+
+- **Pass**: the part is fine and moves on.
+- **Fail**: the part is bad (torn, a tool missing, a reading out of range). It is taken
+  off the line, to be scrapped or repaired. A fail costs money, because a part is thrown
+  away or reworked.
+- **Unsure**: the check cannot tell. The part is put aside for a person to look at.
+
+Every outcome is also written down, with the part's label (such as `tray-07`), the time,
+the photo and what was seen. That list is the inspection log. Factories keep it because
+customers and quality rules demand proof that every part was checked, and so that bad
+parts can be traced back later.
+
+Simple checks are usually done by fixed camera software ("is there a hole at this
+spot?"). This demo is about the checks such software cannot do, the open questions: "is
+anything missing from this tray?", "does any of these watches show a different time?"
+
+In this demo, each photo stands for one part, and there is no production line: recording
+an outcome means writing one line to the inspection log, and nothing is moved or
+scrapped. The AI looks at the photo and decides pass, fail or unsure. A pass or an unsure
+is written down straight away. A fail is not: wrongly scrapping a good part costs money,
+so the server asks a person first (see [the rules](#the-rules-and-where-they-live)).
+
+![The setup. Left: the inspection station, where no AI runs: a camera above a conveyor belt, and the station computer with the MCP server, which keeps the inspection log. Right: the operator's computer with the desktop app, which talks to the MCP server over the network and to Claude, the AI, on the internet.](docs/setup.svg)
+
+The desktop app is in the companion repository `mcp-client`; Claude Code can take its
+place. The station computer, the one the camera is plugged into, and the operator's
+computer can also be one and the same, and the camera a USB webcam, or the fake camera,
+which serves stored photos instead.
+
 ## The tools
 
 | Tool | What it does |
 |---|---|
 | `capture_image` | Takes a photo, capped at 1280×720 pixels, saves it and returns it with an ID such as `20261014-213005`. Changes nothing else. |
 | `zoom_image(image_id, left, top, width, height)` | "Look closer": crops a rectangle of an earlier photo (given as fractions of the photo, 0 to 1) and returns it enlarged. Read-only. |
-| `record_inspection(image_id, part_id, verdict, findings)` | Adds one record to the inspection log. Verdict `pass`, `fail` or `unsure`. A fail needs a human's yes. |
+| `record_inspection(image_id, part_id, verdict, findings)` | Adds one record to the inspection log. Verdict `pass`, `fail` or `unsure`. A fail needs a person's yes; without it, the part is recorded as unsure. |
 
 The photo ID is passed explicitly from one call to the next: the MCP protocol version
 used here (2026-07-28) keeps no session between calls.
@@ -45,17 +83,21 @@ told or tries:
   ID can never point to another file.
 - **Limits are in code.** Photo size is capped; zoom rectangles must lie inside the photo
   and not be too small.
-- **A human confirms a fail.** In a plant, a failed part would be scrapped, so before a
-  fail is recorded the server asks the person at the keyboard through MCP
-  ("elicitation"). In this demo, recording only adds a line to the log. If they say no
-  or close the question, nothing is written. The question is asked only for a record that
-  would otherwise be accepted. In non-interactive use (`claude -p`) the question cannot be
-  shown, so a fail is refused there.
+- **A person confirms a fail.** In a plant, a failed part would be taken off the line,
+  so before a fail is recorded the server asks the person at the keyboard, through the
+  part of MCP that lets a server ask the user a question ("elicitation"). If they agree,
+  the part is recorded as failed. If they say no, decline the question or close it, the
+  part is recorded as unsure, to be put aside for a person to look at, so no part
+  checked is ever missing from the log. Each record says what happened to the question:
+  `fail_confirmation` is `not asked` (the AI did not propose a fail), `yes`, `no`,
+  `declined` (turned down: a person chose "Decline", or the AI application cannot show
+  questions, as in non-interactive use with `claude -p`) or `no answer` (closed without
+  answering). The question is asked only for a record that would otherwise be accepted.
 - **One record per photo**, so the log never holds two verdicts for the same picture.
 - **Everything is audit-logged** with the time and who called: photos, zooms, records,
-  refusals, unconfirmed fails and each visit to the live view (`logs/audit.log`). Records
-  go to `logs/inspections.jsonl`, one JSON object per line, with the name of whoever
-  recorded them.
+  refusals, the answer to each fail question and each visit to the live view
+  (`logs/audit.log`). Records go to `logs/inspections.jsonl`, one JSON object per line,
+  with the name of whoever recorded them.
 - **Over the network, nobody gets in without a key or a login**, and a login's roles
   decide which tools its user may call: a viewer may take photos, look closer and watch
   the live view; an inspector may also record results. The server checks this at every
@@ -101,7 +143,7 @@ this folder (`captures/` and `logs/` are kept out of git).
 |---|---|---|
 | Try it on one computer, no camera needed | Claude Code starts it by itself; you run no server command | [Try it on one computer](#try-it-on-one-computer) |
 | One computer, and you want to watch the live view | You, in a terminal: `inspection-camera --http` | [The live view on one computer](#the-live-view-on-one-computer) |
-| The camera on one computer, Claude Code on another | You, on the camera computer: `inspection-camera --http --host 0.0.0.0` | [The camera on one computer, Claude Code on another](#the-camera-on-one-computer-claude-code-on-another) |
+| The camera on one computer, Claude Code on another | You, on the station computer: `inspection-camera --http --host 0.0.0.0` | [The camera on one computer, Claude Code on another](#the-camera-on-one-computer-claude-code-on-another) |
 | Each person logs in, with a role | You, with a login server | [Logins with roles](#logins-with-roles) |
 
 Without a camera, the server uses a fake one, which serves the `.jpg` photos in
@@ -250,11 +292,11 @@ yourself to the `video` group (`sudo usermod -aG video $USER`, then log in again
 
 ## The camera on one computer, Claude Code on another
 
-The camera computer runs the server; the other computer runs Claude Code and needs
-only Claude Code, not this repository. In the examples, the camera computer's address on
+The station computer runs the server; the other computer runs Claude Code and needs
+only Claude Code, not this repository. In the examples, the station computer's address on
 the network is 192.168.0.20 (on Linux, `hostname -I` shows it).
 
-**On the camera computer**, in a terminal, in this repository's folder, after
+**On the station computer**, in a terminal, in this repository's folder, after
 [installing](#installing) and with the environment active:
 
 1. Choose the camera and take one test photo, as in
@@ -288,14 +330,14 @@ the network is 192.168.0.20 (on Linux, `hostname -I` shows it).
 `~/.config/inspection-camera/api-key`. Use `scp`, on whichever computer can log in to
 the other over SSH:
 
-- If the camera computer runs an SSH server, on the Claude Code computer:
+- If the station computer runs an SSH server, on the Claude Code computer:
 
   ```
   mkdir -p ~/.config/inspection-camera
   scp <user>@192.168.0.20:.config/inspection-camera/api-key ~/.config/inspection-camera/
   ```
 
-- If only the Claude Code computer runs one, on the camera computer:
+- If only the Claude Code computer runs one, on the station computer:
 
   ```
   ssh <user>@<Claude Code computer> mkdir -p .config/inspection-camera
@@ -303,7 +345,7 @@ the other over SSH:
   ```
 
 The key only has to be the same in both files. If the Claude Code computer already has a
-key file, you may instead copy that one to the camera computer before the server's first
+key file, you may instead copy that one to the station computer before the server's first
 start; the server then uses it.
 
 **On the Claude Code computer**, in a terminal:
@@ -319,20 +361,20 @@ start; the server then uses it.
 
 5. Start Claude Code with `claude` in the same folder; `/mcp` should show
    `inspection-camera` as connected. Ask, for example: "Take a photo of the inspection
-   station. What do you see?" Photos and logs are kept on the camera computer, in its
+   station. What do you see?" Photos and logs are kept on the station computer, in its
    `captures/` and `logs/`. If the server shows 401 in its terminal, the two key files
    differ. To watch the live view from this computer too, open
    `http://192.168.0.20:8000/live` and paste the key.
 
-Next time, only step 2 on the camera computer and `claude` on the other: the key file and
+Next time, only step 2 on the station computer and `claude` on the other: the key file and
 the registration stay.
 
-**A new key**: delete the key file on the camera computer, start the server again (it
+**A new key**: delete the key file on the station computer, start the server again (it
 makes a new one), copy it to the Claude Code computer again, and register the server
 there again (remove, then step 4).
 
 **HTTPS.** Over plain HTTP the key travels unencrypted: acceptable on a home network you
-trust, not on a shared one. For HTTPS, on the camera computer, make a certificate once
+trust, not on a shared one. For HTTPS, on the station computer, make a certificate once
 and start the server with it:
 
 ```
@@ -387,7 +429,7 @@ from another computer it takes a pasted login token instead of the key.
 
 **Logins on two computers** (the camera on one, Claude Code on another): Claude Code
 sends login details only over HTTPS or to `localhost`, so both servers need
-certificates. On the camera computer, with its address on the network (here
+certificates. On the station computer, with its address on the network (here
 192.168.0.20), in two terminals:
 
 ```
@@ -402,7 +444,7 @@ Copy `certs/ca.pem` to the other computer, register the server there as above wi
 `https://192.168.0.20:8000/mcp`, and start Claude Code with
 `NODE_EXTRA_CA_CERTS=<path>/ca.pem claude`, so it trusts the certificates. The browser
 warns about the private certificate on the login page once; accept it or import
-`ca.pem` into the browser. The firewall on the camera computer must let ports 8000 and
+`ca.pem` into the browser. The firewall on the station computer must let ports 8000 and
 8443 through.
 
 Not demonstrated here, on purpose: logging in once for several servers (single sign-on
@@ -562,6 +604,7 @@ Code. Windows lists and opens cameras through DirectShow.
 - `scripts/keycloak.sh` and `keycloak/inspection-realm.json`: the demo login server, its
   users and roles
 - `scripts/make_certs.sh`: certificates for HTTPS between two computers
+- `docs/setup.svg`: the figure of the setup
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk),
 version 2.3.0.

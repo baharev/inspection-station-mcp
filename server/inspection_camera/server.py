@@ -1,7 +1,7 @@
 """An inspection station behind MCP: the AI takes photos, looks closer, records results.
 
 The rules live here, not in the prompt: photo size is capped, every input is checked,
-a "fail" (the part gets scrapped) needs a human's yes, and everything is audit-logged.
+a "fail" (the part is taken off the line) needs a person's yes, and everything is audit-logged.
 Over the network, every request needs a secret key or a login, and a login's roles
 decide which tools its user may call.
 
@@ -87,7 +87,13 @@ Fraction = Annotated[float, Field(ge=0.0, le=1.0)]
 
 
 class Confirmation(BaseModel):
-    record: bool = Field(description="Record this part as FAILED?")
+    record: bool = Field(description="Mark this part as FAILED?")
+
+
+# What the person said when asked to confirm a fail: "yes", "no", "declined" (the AI
+# application turned the question down: a Decline button, or automatically where it cannot
+# show questions, as in claude -p), "no answer" (closed without answering).
+FailConfirmation = Literal["not asked", "yes", "no", "declined", "no answer"]
 
 
 class InspectionRecord(BaseModel):
@@ -96,7 +102,9 @@ class InspectionRecord(BaseModel):
     part_id: str
     verdict: Literal["pass", "fail", "unsure"]
     findings: str
-    confirmed_by_human: bool = Field(description="True when a human confirmed a fail")
+    fail_confirmation: FailConfirmation = Field(
+        description="'not asked' unless the AI proposed a fail; without a 'yes' the verdict "
+                    "is unsure")
     recorded_by: str = Field(description="Who recorded it: a login's user name, "
                                          "'api-key' or 'local'")
     note: str = ""
@@ -303,8 +311,10 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
             return None
         require(INSPECTOR, "record_inspection")
         check_record(image_id)
-        return Elicit(f"Record part {part_id} as FAILED (it will be scrapped)? "
-                      f"Photo {image_id}. Findings: {findings}", Confirmation)
+        return Elicit(f"The AI found a problem with part {part_id} (photo {image_id}): "
+                      f"{findings}\n\nIf you agree, the part is marked FAILED; in a real "
+                      f"plant it would be taken off the line. If not, it is marked UNSURE and "
+                      f"put aside for a person to look at.", Confirmation)
 
     @mcp.tool(annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False))
     async def record_inspection(
@@ -318,28 +328,33 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
     ) -> InspectionRecord:
         """Add the result of an inspection to the log: one record per photo.
 
-        Verdict pass, fail or unsure. A fail means the part is scrapped, so a human
-        must confirm it first.
+        Verdict pass, fail or unsure. A fail takes the part off the line, so a person must
+        confirm it first; without their yes the part is recorded as unsure and put aside
+        for a person to look at.
         """
         require(INSPECTOR, "record_inspection")
         check_record(image_id)
-        confirmed = False
+        confirmation = "not asked"
         if verdict == "fail":
-            confirmed = isinstance(answer, AcceptedElicitation) and answer.data.record
-            if not confirmed:
-                how = "said no" if isinstance(answer, AcceptedElicitation) else answer.action
-                audit(f"fail not confirmed ({how}) {part_id} {image_id}")
-                raise ToolError("The human did not confirm the fail. Nothing was recorded.")
+            if isinstance(answer, AcceptedElicitation):
+                confirmation = "yes" if answer.data.record else "no"
+            else:
+                confirmation = "declined" if answer.action == "decline" else "no answer"
+            if confirmation != "yes":
+                verdict = "unsure"
         record = InspectionRecord(
             time=datetime.now().isoformat(timespec="seconds"), image_id=image_id,
-            part_id=part_id, verdict=verdict, findings=findings, confirmed_by_human=confirmed,
-            recorded_by=caller()[0],
+            part_id=part_id, verdict=verdict, findings=findings,
+            fail_confirmation=confirmation, recorded_by=caller()[0],
         )
         with open(inspection_log, "a", encoding="utf-8") as f:
             f.write(record.model_dump_json(exclude={"note"}) + "\n")
         audit(f"record_inspection {part_id} {verdict} {image_id}"
-              + (" (confirmed by human)" if confirmed else ""))
-        if verdict == "unsure":
+              + ("" if confirmation == "not asked" else f" (fail confirmation: {confirmation})"))
+        if confirmation not in ("not asked", "yes"):
+            record.note = (f"The fail was not confirmed (answer: {confirmation}), so part "
+                           f"{part_id} was recorded as unsure: a person should look at it.")
+        elif verdict == "unsure":
             record.note = f"Recorded as unsure: a person should look at part {part_id}."
         return record
 
