@@ -1,3 +1,10 @@
 # Private notes for Claude Code
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Python
+__pycache__/
+*.egg-info/
+.pytest_cache/
+build/
+dist/

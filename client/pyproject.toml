@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inspection-station"
+version = "0.1.0"
+description = "A desktop window where Claude inspects parts with a camera through MCP, and a person confirms every fail"
+license = "MIT"
+requires-python = ">=3.14"   # the version tested
+dependencies = [
+    "mcp==2.3.0",
+    "anthropic==1.15.0",
+    "PySide6==6.12.0",
+]
+
+[project.scripts]
+inspection-station = "inspection_station.app:main"
+
+[project.optional-dependencies]
+# The tests also need the camera server (repository mcp-server) installed.
+test = ["pytest", "anyio", "pillow"]
+
+[tool.setuptools]
+packages = ["inspection_station"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -11,9 +11,10 @@ purpose: about 670 lines of Python and 60 tests. It runs on one computer, or ove
 network with a secret key or with logins and roles.
 
 This repository holds the server, a demo login server and a script for HTTPS
-certificates. The Claude Code side (a ready-made `.mcp.json` with the fake camera) is in
-the companion repository `mcp-client`. To try it, see [Installing](#installing) and
-[How to start it](#how-to-start-it).
+certificates. The programs that use it are in the companion repository `mcp-client`: a
+desktop app, where Claude inspects with the camera and a person confirms every fail, and
+a ready-made `.mcp.json` for Claude Code with the fake camera. To try it, see
+[Installing](#installing) and [How to start it](#how-to-start-it).
 
 Author: [Ali Baharev](https://baharev.info/)
 
