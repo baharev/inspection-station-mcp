@@ -7,7 +7,11 @@ The HTTP app runs inside the test through an ASGI transport, so no port is opene
 login server is replaced by a key pair made here: the tests sign their own tokens.
 """
 
+import base64
+import hashlib
+import hmac
 import io
+import json
 import socket
 import ssl
 import sys
@@ -18,7 +22,9 @@ from urllib.error import URLError
 import httpx2
 import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import RSAAlgorithm
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from PIL import Image
@@ -32,6 +38,7 @@ KEY = "k" * 32
 URL = "http://127.0.0.1:8000/mcp"   # the port is never opened
 THIS_COMPUTER = ("127.0.0.1", 50000)   # where a request comes from
 ELSEWHERE = ("192.0.2.5", 50000)
+LIVE = "http://192.0.2.2:8000/live/frame.jpg"   # as other computers address the server
 
 
 @pytest.fixture
@@ -65,7 +72,8 @@ def login_app(tmp_path):
 def token(user="inspector", roles=("viewer", "inspector"), key=LOGIN_SERVER_KEY, **changes):
     """An access token as the login server would issue it, with any claim changed."""
     claims = {"iss": ISSUER, "aud": URL, "sub": f"id-of-{user}", "preferred_username": user,
-              "roles": list(roles), "azp": "claude-code", "exp": int(time.time()) + 300}
+              "roles": roles if isinstance(roles, str) else list(roles), "azp": "claude-code",
+              "exp": int(time.time()) + 300}
     claims.update(changes)
     return {"Authorization": "Bearer " + jwt.encode(claims, key, algorithm="RS256")}
 
@@ -155,6 +163,16 @@ async def test_a_viewer_may_look_but_not_record(login_app, tmp_path):
     assert "viewer REFUSED record_inspection: needs the role inspector" in audit_lines(tmp_path)[-1]
 
 
+async def test_roles_sent_as_text_count_for_nothing(login_app):
+    # As a list only: in the text, "viewer" would be found inside "trainee-viewer".
+    async with http(login_app, token("trainee", roles="trainee-viewer-inspector")) as client:
+        async with Client(streamable_http_client(URL, http_client=client)) as mcp:
+            result = await mcp.call_tool("capture_image", {})
+        live = await client.get("http://localhost:8000/live/frame.jpg")
+    assert result.is_error and "needs the role 'viewer'" in result.content[0].text
+    assert live.status_code == 403
+
+
 async def test_a_login_without_roles_may_do_nothing(login_app):
     async with http(login_app, token("guest", roles=[])) as client:
         async with Client(streamable_http_client(URL, http_client=client)) as mcp:
@@ -172,6 +190,40 @@ def test_an_unreachable_login_server_stops_the_start_with_a_message():
     assert "Is the login server running" in str(stop.value.code)
 
 
+def test_a_login_server_on_another_computer_needs_https():
+    # Its keys decide which tokens are genuine: over plain HTTP they could be replaced.
+    with pytest.raises(SystemExit) as stop:
+        oauth_auth("http://192.0.2.7:8080/realms/inspection", URL)
+    assert "must be reached over HTTPS" in str(stop.value.code)
+
+
+def login_server_settings(monkeypatch, **settings):
+    """The login server's published settings, as the server reads them at its start."""
+    published = {"issuer": ISSUER, "jwks_uri": ISSUER + "/protocol/openid-connect/certs"}
+    published.update(settings)
+    monkeypatch.setattr("inspection_camera.server.urlopen",
+                        lambda url, timeout: io.BytesIO(json.dumps(published).encode()))
+
+
+def test_the_login_server_must_call_itself_by_the_address_set(monkeypatch):
+    login_server_settings(monkeypatch, issuer="http://localhost:8080/realms/other")
+    with pytest.raises(SystemExit) as stop:
+        oauth_auth(ISSUER, URL)
+    assert "calls itself http://localhost:8080/realms/other" in str(stop.value.code)
+
+
+def test_the_login_servers_keys_from_another_computer_need_https(monkeypatch):
+    login_server_settings(monkeypatch, jwks_uri="http://192.0.2.7/certs")
+    with pytest.raises(SystemExit) as stop:
+        oauth_auth(ISSUER, URL)
+    assert "publishes its keys at http://192.0.2.7/certs" in str(stop.value.code)
+
+
+def test_a_login_server_that_fits_is_used(monkeypatch):
+    login_server_settings(monkeypatch)
+    assert oauth_auth(ISSUER + "/", URL)["token_verifier"].issuer == ISSUER
+
+
 def test_an_untrusted_login_server_certificate_is_named_in_the_message(monkeypatch):
     def untrusted(url, timeout):
         raise URLError(ssl.SSLCertVerificationError("certificate verify failed"))
@@ -181,9 +233,128 @@ def test_an_untrusted_login_server_certificate_is_named_in_the_message(monkeypat
     assert "Set SSL_CERT_FILE" in str(stop.value.code)
 
 
-# --- the live view --------------------------------------------------------------------
+# --- forged and tampered tokens -------------------------------------------------------
+# Through the server's own way of finding the login server's key: its published key list,
+# looked up by the key's name (kid) in the token. Only the network is replaced.
 
-LIVE = "http://192.0.2.2:8000/live/frame.jpg"   # as other computers address the server
+KID = "login-server-key"
+KEYS_URL = ISSUER + "/protocol/openid-connect/certs"
+ATTACKER_KEYS = "https://attacker.example/certs"
+
+
+def b64(data) -> str:
+    data = data if isinstance(data, bytes) else json.dumps(data).encode()
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def published_key(key, kid=KID) -> dict:
+    return json.loads(RSAAlgorithm.to_jwk(key.public_key())) | {"kid": kid, "use": "sig",
+                                                                "alg": "RS256"}
+
+
+def claims(**changes) -> dict:
+    """What the login server would say about an inspector, with claims changed (None: left out)."""
+    fair = {"iss": ISSUER, "aud": URL, "sub": "id-of-mallory", "preferred_username": "mallory",
+            "roles": ["viewer", "inspector"], "exp": int(time.time()) + 300}
+    return {name: value for name, value in (fair | changes).items() if value is not None}
+
+
+def signed(the_claims=None, key=LOGIN_SERVER_KEY, algorithm="RS256", **header) -> str:
+    header = {"kid": KID} | header
+    return jwt.encode(the_claims or claims(), key, algorithm=algorithm,
+                      headers={name: value for name, value in header.items() if value is not None})
+
+
+def unsigned(header, the_claims, signature=b"") -> str:
+    return f"{b64(header)}.{b64(the_claims)}.{b64(signature) if signature else ''}"
+
+
+def hmac_signed(secret: bytes) -> str:
+    """Signed as if the login server's public key were a shared password (key confusion)."""
+    content = f"{b64({'alg': 'HS256', 'kid': KID})}.{b64(claims())}"
+    return f"{content}.{b64(hmac.new(secret, content.encode(), hashlib.sha256).digest())}"
+
+
+def edited(token: str, the_claims) -> str:
+    header, _, signature = token.split(".")
+    return f"{header}.{b64(the_claims)}.{signature}"
+
+
+PUBLIC_PEM = LOGIN_SERVER_KEY.public_key().public_bytes(
+    serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+
+FORGED = {
+    "no signature, algorithm none": unsigned({"alg": "none", "kid": KID}, claims()),
+    "no signature, algorithm None": unsigned({"alg": "None", "kid": KID}, claims()),
+    "algorithm NONE with a signature": unsigned({"alg": "NONE", "kid": KID}, claims(), b"x"),
+    "public key as an HMAC password": hmac_signed(PUBLIC_PEM),
+    "public key's modulus as an HMAC password": hmac_signed(
+        published_key(LOGIN_SERVER_KEY)["n"].encode()),
+    "attacker's key under its own name": signed(key=OTHER_KEY, kid="attacker"),
+    "attacker's key under the login server's key name": signed(key=OTHER_KEY),
+    "attacker's key inside the token": signed(key=OTHER_KEY, jwk=published_key(OTHER_KEY)),
+    "attacker's key list named in the token (jku)": signed(key=OTHER_KEY, jku=ATTACKER_KEYS),
+    "attacker's key list named in the token (x5u)": signed(key=OTHER_KEY, x5u=ATTACKER_KEYS),
+    "attacker's own login server": signed(claims(iss="https://attacker.example/realms/x"),
+                                          key=OTHER_KEY, kid="attacker"),
+    "another issuer": signed(claims(iss="http://localhost:8080/realms/other")),
+    "the issuer with a slash added": signed(claims(iss=ISSUER + "/")),
+    "issued for another server": signed(claims(aud="http://localhost:9000/mcp")),
+    "issued for no server": signed(claims(aud=None)),
+    "expired": signed(claims(exp=int(time.time()) - 10)),
+    "no expiry": signed(claims(exp=None)),
+    "no user": signed(claims(sub=None)),
+    "not valid yet": signed(claims(nbf=int(time.time()) + 600)),
+    "issued in the future": signed(claims(iat=int(time.time()) + 600)),
+    "another algorithm, RS512": signed(algorithm="RS512"),
+    "another algorithm, PS256": signed(algorithm="PS256"),
+    "no key name": signed(kid=None),
+    "signature removed": signed().rsplit(".", 1)[0] + ".",
+    "claims edited after signing": edited(signed(claims(roles=["viewer"])), claims()),
+    "not a token": "not.a.token",
+}
+
+
+@pytest.fixture
+def published_login_app(tmp_path, monkeypatch):
+    """The server with logins, finding the login server's keys as it does in use.
+
+    Returns the app and the addresses it fetched keys from.
+    """
+    fetched = []
+
+    class Network:   # stands in for the connection to the login server
+        def open(self, request, timeout):
+            fetched.append(request.full_url)
+            return io.BytesIO(json.dumps({"keys": [published_key(LOGIN_SERVER_KEY)]}).encode())
+
+    login_server_settings(monkeypatch, jwks_uri=KEYS_URL)
+    monkeypatch.setattr("jwt.jwks_client.urllib.request.build_opener", lambda *handlers: Network())
+    return make_app(tmp_path, oauth_auth(ISSUER, URL)), fetched
+
+
+@pytest.mark.parametrize("forged", FORGED.values(), ids=FORGED.keys())
+async def test_forged_and_tampered_tokens_are_refused(published_login_app, forged):
+    app, fetched = published_login_app
+    headers = {"Authorization": f"Bearer {forged}"}
+    async with http(app, headers, client=ELSEWHERE) as client:
+        response = await client.post(URL, json={})
+        live = await client.get(LIVE, headers=headers)
+    assert response.status_code == 401 and live.status_code == 401
+    assert set(fetched) <= {KEYS_URL}   # never the attacker's keys
+
+
+@pytest.mark.parametrize("fair", [signed(), signed(claims(aud=["account", URL]))],
+                         ids=["for this server", "for several servers, this one among them"])
+async def test_a_token_from_the_login_server_is_accepted(published_login_app, fair):
+    app, fetched = published_login_app
+    async with http(app, {"Authorization": f"Bearer {fair}"}, client=ELSEWHERE) as client:
+        live = await client.get(LIVE)
+    assert live.status_code == 200
+    assert fetched == [KEYS_URL]
+
+
+# --- the live view --------------------------------------------------------------------
 
 
 async def test_the_live_page_is_served_to_anyone(app):

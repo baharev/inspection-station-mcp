@@ -181,7 +181,10 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         if token is None:   # stdio: the person at this computer
             return "local", ALL_ROLES
         claims = token.claims or {}
-        return claims.get("preferred_username") or token.subject, claims.get("roles", [])
+        roles = claims.get("roles", [])
+        # A list only: in a text such as "trainee-viewer", "viewer" would be found too.
+        return (claims.get("preferred_username") or token.subject,
+                roles if isinstance(roles, list) else [])
 
     # Never print() in a stdio server: stdout carries the protocol. Logs go to files.
     def audit(text: str) -> None:
@@ -415,6 +418,16 @@ def secret_key(path: Path = KEY_FILE) -> str:
     return key
 
 
+def secure_or_local(url: str) -> bool:
+    """True for an https:// address, or any address on this computer.
+
+    The login server's public keys decide which tokens are genuine: fetched over plain
+    HTTP from another computer, anyone on the network between could swap in their own.
+    """
+    address = urlsplit(url)
+    return address.scheme == "https" or address.hostname in ("localhost", "127.0.0.1", "::1")
+
+
 def oauth_auth(issuer: str, server_url: str, signing_key=None) -> dict:
     """Settings for create_server: every request must carry a token from the login server.
 
@@ -422,17 +435,28 @@ def oauth_auth(issuer: str, server_url: str, signing_key=None) -> dict:
     login server's published keys are used.
     """
     issuer = issuer.rstrip("/")
+    if not secure_or_local(issuer):
+        sys.exit(f"The login server {issuer} must be reached over HTTPS (https://), or run "
+                 "on this computer (localhost): over plain HTTP, anyone on the network could "
+                 "replace its keys and log in as anyone.")
     if signing_key is None:
         # The login server publishes where its public keys are (OpenID Connect discovery).
         settings = f"{issuer}/.well-known/openid-configuration"
         try:
             with urlopen(settings, timeout=10) as response:
-                keys = json.load(response)["jwks_uri"]
+                published = json.load(response)
+            keys, named = published["jwks_uri"], published["issuer"]
         except (OSError, ValueError, KeyError) as err:   # unreachable, refused, not JSON
             hint = ("Set SSL_CERT_FILE to the certificate authority that signed its certificate."
                     if isinstance(getattr(err, "reason", err), ssl.SSLCertVerificationError)
                     else "Is the login server running, and is OAUTH_ISSUER right?")
             sys.exit(f"Cannot read the login server's settings at {settings} ({err}). {hint}")
+        if named.rstrip("/") != issuer:
+            sys.exit(f"The login server at {issuer} calls itself {named}: set OAUTH_ISSUER "
+                     "to the address it names.")
+        if not secure_or_local(keys):
+            sys.exit(f"The login server publishes its keys at {keys}, over plain HTTP from "
+                     "another computer: anyone on the network could replace them.")
         signing_key = jwt.PyJWKClient(keys).get_signing_key_from_jwt
     # resource_server_url publishes, for clients such as Claude Code, which login server
     # to use. The verifier checks that a token was issued for this server (its audience).
@@ -481,6 +505,10 @@ def next_steps(host: str, port: int, scheme: str, key_file: bool,
                      + (" (on another computer, copy the key file there first):" if there else ":"))
         lines += [f"  {shell:14}claude mcp add -s local --transport http inspection-camera {url} "
                   f'--header "Authorization: Bearer {key}"' for shell, key in read_key.items()]
+    if there and scheme == "http":
+        lines.append("Warning: other computers connect over plain HTTP, so anyone on the network "
+                     "can read the key or login tokens on the way. Fine on a network you trust; "
+                     "elsewhere, use HTTPS (--tls-cert and --tls-key).")
     return lines
 
 

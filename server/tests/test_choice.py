@@ -177,6 +177,7 @@ def test_the_start_shows_the_addresses_and_the_claude_code_command():
                         "$(cat ~/.config/inspection-camera/api-key)\"")
     assert lines[5].startswith("  PowerShell:   claude mcp add")
     assert lines[5].endswith("$(Get-Content $HOME\\.config\\inspection-camera\\api-key)\"")
+    assert lines[6].startswith("Warning: other computers connect over plain HTTP")
 
 
 def test_the_start_says_when_only_this_computer_can_connect():
@@ -184,9 +185,10 @@ def test_the_start_says_when_only_this_computer_can_connect():
     assert lines[0].startswith("Only this computer can connect")
     assert "https://localhost:8000/mcp" in lines[-1]
     assert "copy the key file" not in "\n".join(lines)
+    assert "Warning" not in "\n".join(lines + next_steps("127.0.0.1", 8000, "http", key_file=True))
 
 
 def test_with_logins_the_start_shows_the_server_url_and_no_key_command():
     lines = next_steps("0.0.0.0", 8000, "https", key_file=False, address="192.168.0.20",
                        mcp_url="https://station.example:8000/mcp")
-    assert lines[-1] == "MCP address: https://station.example:8000/mcp"
+    assert lines[-1] == "MCP address: https://station.example:8000/mcp"   # HTTPS: no warning

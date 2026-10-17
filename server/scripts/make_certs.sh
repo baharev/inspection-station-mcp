@@ -6,16 +6,17 @@
 #     scripts/make_certs.sh <address>...   e.g. scripts/make_certs.sh 192.168.0.20 camera-pc
 #
 # Every address the other computer uses to reach this one must be listed (IP addresses
-# and host names). Run it again to replace the certificate; the CA is kept.
+# and host names). The CA's private key is deleted once it has signed: a CA the other
+# computer trusts could otherwise vouch for any website, in the hands of whoever got the key.
+# Run it again to replace both; the other computer then needs the new certs/ca.pem.
 set -euo pipefail
-[ $# -ge 1 ] || { sed -n '2,9p' "$0"; exit 1; }
+[ $# -ge 1 ] || { sed -n '2,11p' "$0"; exit 1; }
 cd "$(dirname "$0")/.."
 mkdir -p certs && cd certs
-if [ ! -f ca.key ]; then
-    openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=Inspection camera demo CA" \
-        -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
-        -keyout ca.key -out ca.pem 2>/dev/null
-fi
+trap 'rm -f ca.key ca.srl server.csr' EXIT   # also if a step fails
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=Inspection camera demo CA" \
+    -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -keyout ca.key -out ca.pem 2>/dev/null
 names="DNS:localhost,IP:127.0.0.1"
 for address in "$@"; do
     if [[ $address =~ ^[0-9.]+$ ]]; then names+=",IP:$address"; else names+=",DNS:$address"; fi
@@ -26,7 +27,6 @@ openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 
         "keyUsage=critical,digitalSignature,keyEncipherment" "extendedKeyUsage=serverAuth" \
         "subjectKeyIdentifier=hash" "authorityKeyIdentifier=keyid") \
     -out server.pem 2>/dev/null
-rm server.csr
 chmod 644 server.key   # the login server's container runs as another user and must read it
 echo "certs/server.pem is valid for: $names"
-echo "The other computer trusts certs/ca.pem."
+echo "The other computer trusts certs/ca.pem (new: copy it there again)."

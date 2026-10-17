@@ -557,8 +557,8 @@ makes a new one), copy it to the Claude Code computer again, and register the se
 there again (remove, then step 3).
 
 **HTTPS.** Over plain HTTP the key travels unencrypted: acceptable on a home network you
-trust, not on a shared one. For HTTPS, on the station computer, make a certificate once
-and start the server with it:
+trust, not on a shared one (the server warns at its start). For HTTPS, on the station
+computer, make a certificate once and start the server with it:
 
 ```
 scripts/make_certs.sh 192.168.0.20
@@ -568,14 +568,19 @@ inspection-camera --http --host 0.0.0.0 --tls-cert certs/server.pem --tls-key ce
 Copy `certs/ca.pem` to the Claude Code computer (as the key file), use the `https://`
 addresses the server now shows, in step 3 and for the live view, and start Claude Code
 with `NODE_EXTRA_CA_CERTS=<path>/ca.pem claude`, so it trusts the certificate. The
-browser warns about the private certificate once.
+browser warns about the private certificate once. `ca.pem` belongs to a small certificate
+authority of this demo; the script deletes its private key once it has signed the
+certificate, so nobody can use it to vouch for other websites. Running the script again
+makes a new one: copy the new `ca.pem` to the other computer again.
 
 ## Logins with roles
 
 Logins (OAuth) name every person, instead of one key shared by everyone. Each person
 logs in to a login server in the browser, Claude Code receives a token for this server,
 and the server checks the token's signature, who issued it and for which server, then
-reads the person's roles from it. `scripts/keycloak.sh` starts a demo login server
+reads the person's roles from it. The tests try 26 forged or altered tokens on it (no signature,
+the algorithm "none", someone else's key or login server, a token for another server,
+claims edited after signing, and more): all refused. `scripts/keycloak.sh` starts a demo login server
 ([Keycloak](https://www.keycloak.org/), in a container; needs
 [podman](https://podman.io/)) with two users: `inspector` (password `inspector`; may
 record results) and `viewer` (password `viewer`; may only take photos, look closer and
@@ -628,6 +633,10 @@ warns about the private certificate on the login page once; accept it or import
 `ca.pem` into the browser. The firewall on the station computer must let ports 8000 and
 8443 through.
 
+The login server's administration page (`/admin`, user `admin`) takes a password made
+new at each start of `scripts/keycloak.sh`, shown in its first line: with `--https`,
+other computers can reach that page too.
+
 Not demonstrated here, on purpose: logging in once for several servers (single sign-on
 does this on a real login server), and Claude Code registering itself with the login
 server (dynamic client registration; most plants register applications by hand).
@@ -645,7 +654,7 @@ each one on a line of its own before the command, as in `$env:CAMERA = 'fake'`:
 | `SAMPLES_DIR` | The photos the fake camera serves (default: `samples/`) |
 | `DATA_DIR` | Where photos (`captures/`) and logs (`logs/`) are kept (default: this folder) |
 | `API_KEY` | With `--http`: a secret key of your own, at least 32 characters, instead of the key file `~/.config/inspection-camera/api-key` |
-| `OAUTH_ISSUER` | With `--http`, instead of a key: the login server whose tokens are accepted |
+| `OAUTH_ISSUER` | With `--http`, instead of a key: the login server whose tokens are accepted; an `https://` address, or one on this computer (`localhost`) |
 | `SERVER_URL` | With `OAUTH_ISSUER`: this server's address as clients use it; tokens must be issued for it |
 | `SSL_CERT_FILE` | When the login server uses a private certificate: the certificate authority to trust (`certs/ca.pem`) |
 
