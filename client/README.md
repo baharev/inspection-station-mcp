@@ -12,7 +12,7 @@ plug tools, data and devices into AI applications. The camera sits behind an MCP
 in the companion repository `mcp-server`; this repository holds a desktop app that uses
 it. Claude Code can use the server too, without this app: see the `mcp-server` README.
 The app is small on purpose: about
-920 lines of Python, using the official MCP and Anthropic libraries.
+1,000 lines of Python, using the official MCP and Anthropic libraries.
 
 Author: [Ali Baharev](https://baharev.info/)
 
@@ -94,8 +94,13 @@ serves stored photos instead.
 2. The app sends Claude the conversation, and the camera server's tools: take a photo,
    look closer at part of a photo, record an inspection result.
 3. When Claude asks for a tool, the app passes the call on to the camera server and
-   gives the result, photos included, back to Claude. The window shows each step: what
-   Claude asked for, in plain words, and what came back.
+   gives the result, photos included, back to Claude. The window shows each step, in
+   gray below your question: what Claude asked for, in plain words, and what came back.
+   Tick "Show MCP messages" to see the messages themselves as well, as the Model
+   Context Protocol sends them between the app and the camera server: indented, one
+   field per line, each message between two thin lines. Where a text holds JSON of its
+   own, such as the inspection record, that JSON is shown unpacked, not as one string
+   full of escapes.
 4. Steps 2 and 3 repeat until Claude answers.
 
 The rules live in the camera server, not in the app and not in what Claude is told: the
@@ -104,8 +109,8 @@ record per photo, logs every action, and asks a person before marking a part as
 failed. The app only passes the server's question on to you, and your answer back. A refusal from the
 server is shown in red, and Claude reads it too.
 
-Below the conversation, the window shows what each question cost and what the whole
-conversation cost so far. In our tests, a question with a photo and a few closer looks
+Each answer ends with what the question cost, and below the conversation the window
+shows what the whole conversation cost so far. In our tests, a question with a photo and a few closer looks
 cost $0.04 to $0.07 with Claude Opus 5.5 and $0.01 to $0.02 with Claude Sonnet 5.5; a
 short follow-up question costs less than a cent. You choose the model below the conversation.
 "New conversation" starts over; until then, Claude remembers the earlier questions and

@@ -21,18 +21,25 @@ from urllib.parse import urlsplit, urlunsplit
 
 import anthropic
 from PySide6.QtCore import QObject, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import (QImage, QPixmap, QTextBlockFormat, QTextCharFormat, QTextCursor,
-                           QTextDocument)
-from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout,
-                               QLabel, QLineEdit, QMainWindow, QPushButton, QScrollArea,
-                               QSplitter, QTextBrowser, QVBoxLayout, QWidget)
+from PySide6.QtGui import (QColor, QFontDatabase, QFontMetricsF, QImage, QPixmap,
+                           QTextBlockFormat, QTextCharFormat, QTextCursor, QTextDocument,
+                           QTextFormat, QTextLength)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+                               QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton,
+                               QScrollArea, QSplitter, QTextBrowser, QVBoxLayout, QWidget)
 
 from .login import BrowserLogin
-from .station import (CAMERA_KEY_FILE, CLAUDE_KEY_FILE, MODELS, Answer, Done, KeyAuth, Note,
-                      Question, Station, ToolCall, ToolResult, camera_client, describe,
-                      live_view, read_key)
+from .station import (CAMERA_KEY_FILE, CLAUDE_KEY_FILE, MODELS, Answer, Done, KeyAuth,
+                      McpMessage, Note, Question, Station, ToolCall, ToolResult, camera_client,
+                      describe, live_view, read_key)
 
 THUMBNAIL = 240      # width of a picture in the conversation, in pixels
+INDENT = 20          # Claude's work on a question is indented below it, in pixels
+# The conversation keeps to one font and size: the operator and Claude in the normal
+# color, Claude's work in gray, problems in red. Only MCP messages, shown on request, are
+# in a code font.
+GRAY = "#777"
+RED = "#c22"
 
 
 class Worker(QObject):
@@ -220,6 +227,8 @@ class Window(QMainWindow):
         self.worker = worker
         self.server_url = server_url
         self.pictures = []
+        self.entries = []   # everything shown in the conversation, to show it again
+        self.after_mcp = False   # the last thing shown is an MCP message, with its line below
         self.conversation_cost = 0.0
         self.started = 0.0
         self.setWindowTitle("Inspection station")
@@ -237,6 +246,10 @@ class Window(QMainWindow):
         self.new_button.clicked.connect(self.new_conversation)
         self.model = QComboBox()
         self.model.addItems(MODELS)
+        self.show_mcp = QCheckBox("Show MCP messages")
+        self.show_mcp.setToolTip("Also show the messages between this app and the camera "
+                                 "server, as the Model Context Protocol sends them")
+        self.show_mcp.toggled.connect(self.show_again)
         self.cost = QLabel()
 
         asking = QHBoxLayout()
@@ -246,6 +259,7 @@ class Window(QMainWindow):
         below.addWidget(self.new_button)
         below.addWidget(QLabel("Model:"))
         below.addWidget(self.model)
+        below.addWidget(self.show_mcp)
         below.addStretch()
         below.addWidget(self.cost)
         right = QWidget()
@@ -269,7 +283,7 @@ class Window(QMainWindow):
 
         worker.connected.connect(lambda text: self.status.setText(f"{server_url}: {text}"))
         worker.step.connect(self.show_step)
-        worker.note.connect(lambda text: self.add(f"<p style='color:#777'>{html.escape(text)}</p>"))
+        worker.note.connect(lambda text: self.add(gray(html.escape(text))))
         worker.confirm.connect(self.confirm)
         worker.frame.connect(live_view.show_jpeg)
         worker.no_frame.connect(live_view.show_problem)
@@ -284,13 +298,15 @@ class Window(QMainWindow):
             return
         self.question.clear()
         self.set_working(True)
-        self.add(f"<p><b>You:</b> {html.escape(question)}</p>")
+        self.add(f"<b>Me:</b> {html.escape(question)}")
         self.worker.ask(question, self.model.currentText())
 
     def new_conversation(self) -> None:
         self.worker.station.new_conversation()
         self.conversation.clear()
+        self.after_mcp = False
         self.pictures.clear()
+        self.entries.clear()
         self.conversation_cost = 0.0
         self.cost.setText("")
 
@@ -317,62 +333,170 @@ class Window(QMainWindow):
     def show_step(self, step) -> None:
         match step:
             case Note(text):
-                self.add(f"<p style='color:#777'><i>{paragraphs(text)}</i></p>")
+                self.add(gray(paragraphs(text)), indent=True)
             case Answer(text):
-                self.add_markdown(text)
+                self.add(text, kind="answer")
             case ToolCall():
-                self.add(f"<p style='color:#2a6'>▸ {html.escape(in_words(step))}<br>"
-                         f"<span style='color:#999; font-size:small'>{step.name} "
-                         f"{html.escape(json.dumps(step.arguments))}</span></p>")
+                self.add(gray(f"▸ {html.escape(in_words(step))}"), indent=True)
+            case McpMessage():
+                self.add(mcp_message(step), kind="mcp")
             case ToolResult(refused=True):
                 reason = step.text.removeprefix(f"Error executing tool {step.name}: ")
-                self.add(f"<p style='color:#c22'>Refused by the server: "
-                         f"{html.escape(reason)}</p>")
+                self.add(red(f"Refused by the server: {html.escape(reason)}"), indent=True)
+            case ToolResult() if step.pictures:   # the text is for Claude: the picture shows it
+                self.add("".join(self.thumbnail(p) for p in step.pictures), indent=True)
             case ToolResult():
-                self.add(f"<p style='color:#555; font-size:small'>{result_in_words(step)}</p>")
-                if step.pictures:
-                    self.add("".join(self.thumbnail(p) for p in step.pictures))
+                self.add(gray(result_in_words(step)), indent=True)
             case Done(cost, problem):
                 self.conversation_cost += cost
                 if problem:
-                    self.add(f"<p style='color:#c22'>{html.escape(problem)}</p>")
-                self.add(f"<p style='color:#999; font-size:small'>"
-                         f"{'Stopped after' if problem else 'Answered in'} "
-                         f"{time.monotonic() - self.started:.0f} s, cost {dollars(cost)}</p><hr>")
-                self.cost.setText(f"This question: {dollars(cost)} · conversation: "
-                                  f"{dollars(self.conversation_cost)}")
+                    self.add(red(html.escape(problem)), indent=True)
+                self.add(gray(f"{'Stopped after' if problem else 'Answered in'} "
+                              f"{time.monotonic() - self.started:.0f} s, cost "
+                              f"{dollars(cost)}") + "<hr>", indent=True)
+                self.cost.setText(f"Conversation so far: {dollars(self.conversation_cost)}")
                 self.set_working(False, problem)
                 self.question.setFocus()
 
     def thumbnail(self, data: bytes) -> str:
         name = f"picture:{len(self.pictures)}"
         self.pictures.append(data)
+        self.add_picture(name, data)
+        return f"<a href='{name}'><img src='{name}' width='{THUMBNAIL}'></a> "
+
+    def add_picture(self, name: str, data: bytes) -> None:
         self.conversation.document().addResource(
             QTextDocument.ResourceType.ImageResource, QUrl(name), QImage.fromData(data))
-        return f"<a href='{name}'><img src='{name}' width='{THUMBNAIL}'></a> "
 
     def open_picture(self, url: QUrl) -> None:
         n = int(url.toString().split(":")[1])
         picture_window(self, self.pictures[n], f"Picture {n + 1}")
 
-    def add(self, fragment: str) -> None:
-        cursor = self.conversation.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertBlock(QTextBlockFormat(), QTextCharFormat())   # not the previous format
-        cursor.insertHtml(fragment)
+    def add(self, content: str, kind: str = "html", indent: bool = False) -> None:
+        """Adds a paragraph: html, Claude's answer (Markdown) or an MCP message (html)."""
+        self.entries.append((content, kind, indent))
+        self.show_entry(content, kind, indent)
         self.scroll_down()
 
-    def add_markdown(self, text: str) -> None:
+    def show_entry(self, content: str, kind: str, indent: bool) -> None:
+        if kind == "mcp":
+            if self.show_mcp.isChecked():
+                self.show_mcp_message(content)
+            return
+        self.after_mcp = False
         cursor = self.conversation.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertBlock(QTextBlockFormat(), QTextCharFormat())
-        cursor.insertHtml("<b>Claude:</b> ")
-        cursor.insertMarkdown(text)
+        block = QTextBlockFormat()
+        block.setLeftMargin(INDENT if indent else 0)
+        cursor.insertBlock(block, QTextCharFormat())   # not the previous format
+        if kind == "answer":
+            cursor.insertHtml("<b>Claude:</b> ")
+            cursor.insertMarkdown(content)
+        else:
+            cursor.insertHtml(content)
+
+    def show_mcp_message(self, text: str) -> None:
+        """An MCP message in a code font, each line a paragraph of its own, so that a
+        line too long for the window stays indented where it wraps."""
+        code = QTextCharFormat()
+        code.setFontFamilies([QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+                              .family()])
+        code.setForeground(QColor(GRAY))
+        font = self.conversation.font()
+        font.setFamilies(code.fontFamilies())
+        space = QFontMetricsF(font).horizontalAdvance(" ")
+        cursor = self.conversation.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if not self.after_mcp:   # between two messages, one line is enough
+            self.add_line(cursor)
+        for line in text.split("\n"):
+            text = line.lstrip(" ")
+            block = QTextBlockFormat()
+            block.setLeftMargin(INDENT + space * (len(line) - len(text)))
+            cursor.insertBlock(block, code)
+            cursor.insertText(text, code)
+        self.add_line(cursor)
+        self.after_mcp = True
+
+    @staticmethod
+    def add_line(cursor: QTextCursor) -> None:
+        """A thin gray line across the conversation, to mark where an MCP message starts
+        and ends."""
+        line = QTextBlockFormat()
+        line.setLeftMargin(INDENT)
+        line.setProperty(QTextFormat.Property.BlockTrailingHorizontalRulerWidth,
+                         QTextLength(QTextLength.Type.PercentageLength, 100))
+        line.setBackground(QColor(GRAY))
+        cursor.insertBlock(line, QTextCharFormat())
+
+    def show_again(self) -> None:
+        """Shows the whole conversation again, with or without the MCP messages."""
+        self.conversation.clear()
+        self.after_mcp = False
+        for n, data in enumerate(self.pictures):
+            self.add_picture(f"picture:{n}", data)
+        for entry in self.entries:
+            self.show_entry(*entry)
         self.scroll_down()
 
     def scroll_down(self) -> None:
         bar = self.conversation.verticalScrollBar()
         bar.setValue(bar.maximum())
+
+
+def gray(fragment: str) -> str:
+    return f"<span style='color:{GRAY}'>{fragment}</span>"
+
+
+def red(fragment: str) -> str:
+    return f"<span style='color:{RED}'>{fragment}</span>"
+
+
+def mcp_message(message: McpMessage) -> str:
+    """An MCP message as text, laid out over several lines: → from this app to the
+    server, ← back."""
+    return f"{'→' if message.sent else '←'} {message.method} {pretty(message.body)}"
+
+
+SHORT = 60   # a part of a message this long or shorter stays on one line
+
+
+def pretty(value, depth: int = 0) -> str:
+    """JSON, indented. A text that holds JSON of its own, such as an inspection record,
+    is shown as that JSON, indented too, instead of as one string full of escapes."""
+    if isinstance(value, str) and (inner := json_inside(value)) is not None:
+        return "(JSON sent as a string) " + pretty(inner, depth)
+    if not isinstance(value, (dict, list)) or not value:
+        return json.dumps(value, ensure_ascii=False)
+    one_line = json.dumps(value, ensure_ascii=False)
+    if len(one_line) <= SHORT and not holds_json(value):
+        return one_line
+    pad = "  " * (depth + 1)
+    if isinstance(value, dict):
+        parts = [f"{pad}{json.dumps(k, ensure_ascii=False)}: {pretty(v, depth + 1)}"
+                 for k, v in value.items()]
+        start, end = "{", "}"
+    else:
+        parts = [f"{pad}{pretty(v, depth + 1)}" for v in value]
+        start, end = "[", "]"
+    return start + "\n" + ",\n".join(parts) + "\n" + "  " * depth + end
+
+
+def json_inside(text: str):
+    """The JSON object or list a text holds, or None."""
+    if text.strip()[:1] not in ("{", "["):
+        return None
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
+def holds_json(value) -> bool:
+    if isinstance(value, str):
+        return json_inside(value) is not None
+    parts = value.values() if isinstance(value, dict) else value if isinstance(value, list) else []
+    return any(holds_json(part) for part in parts)
 
 
 def dollars(amount: float) -> str:

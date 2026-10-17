@@ -10,8 +10,8 @@ import pytest
 from anthropic.types import Message
 from mcp import Client
 
-from inspection_station.station import (Answer, CameraServerRefused, Done, Note, Question,
-                                        Station, ToolCall, ToolResult, describe)
+from inspection_station.station import (Answer, CameraServerRefused, Done, McpMessage, Note,
+                                        Question, Station, ToolCall, ToolResult, describe)
 from stand_in_server import stand_in_server
 
 pytestmark = pytest.mark.anyio
@@ -98,11 +98,20 @@ async def test_claude_takes_a_photo_and_answers(server):
     station = Station(claude, lambda confirm: Client(server, elicitation_callback=confirm))
     steps, _ = await run(station, "What is on the tray?")
 
-    assert [type(s) for s in steps] == [Note, ToolCall, ToolResult, Answer, Done]
-    photo = steps[2]
+    assert [type(s) for s in steps] == [Note, ToolCall, McpMessage, McpMessage, ToolResult,
+                                        Answer, Done]
+    photo = steps[4]
     assert photo.text.startswith("Photo ") and len(photo.pictures) == 1 and not photo.refused
     assert photo.pictures[0][:2] == b"\xff\xd8"   # a JPEG
-    assert steps[4].problem == ""
+    assert steps[6].problem == ""
+
+    # the MCP messages as sent, the picture's data left out
+    sent, received = steps[2], steps[3]
+    assert sent == McpMessage(True, "tools/call", {"name": "capture_image", "arguments": {}})
+    assert not received.sent and received.method == "result"
+    caption, image = received.body["content"]
+    assert caption["text"] == photo.text and image["mimeType"] == "image/jpeg"
+    assert image["data"].endswith(" bytes, not shown)")
 
     # Claude was given the server's tools and instructions, then the photo as an image
     first, second = claude.requests
@@ -149,6 +158,12 @@ async def test_the_person_answers_the_servers_question_about_a_fail(stand_in, an
     result = [s for s in steps if isinstance(s, ToolResult)][-1]
     assert not result.refused
     assert answers == [server_got]
+
+    # the server's question and the answer, as MCP messages within the tool call
+    question, answered = [s for s in steps if isinstance(s, McpMessage)][-3:-1]
+    assert question.method == "elicitation/create" and not question.sent
+    assert "tray-07" in question.body["message"]
+    assert answered.sent and answered.body["action"] == ("cancel" if answer is None else "accept")
 
 
 async def test_cost_counts_every_step(server):

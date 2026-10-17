@@ -165,6 +165,13 @@ class ToolResult:    # the server's answer: text, pictures (JPEG bytes), refused
 
 
 @dataclass
+class McpMessage:    # a message between this app and the camera server, as MCP sends it
+    sent: bool       # True: from this app to the server
+    method: str      # e.g. "tools/call"; "result" for the answer to a request
+    body: dict       # the message's parameters or result, as JSON (pictures left out)
+
+
+@dataclass
 class Done:          # the question is answered (or stopped); what it cost
     cost: float
     problem: str = ""
@@ -206,14 +213,20 @@ class Station:
         pending = {}   # the tool call running now, for the confirmation dialog
 
         async def confirm(context, params) -> ElicitResult:
+            report(McpMessage(False, "elicitation/create", as_json(params)))
             fields = list(params.requested_schema.get("properties", {}))
             if len(fields) != 1:   # this app can only answer yes or no
-                return ElicitResult(action="decline")
+                reply = ElicitResult(action="decline")
+                report(McpMessage(True, "result", as_json(reply)))
+                return reply
             image_id = pending.get("arguments", {}).get("image_id")
             answer = await ask_person(Question(params.message, self.photos.get(image_id)))
             if answer is None:
-                return ElicitResult(action="cancel")
-            return ElicitResult(action="accept", content={fields[0]: answer})
+                reply = ElicitResult(action="cancel")
+            else:
+                reply = ElicitResult(action="accept", content={fields[0]: answer})
+            report(McpMessage(True, "result", as_json(reply)))
+            return reply
 
         self.messages.append({"role": "user", "content": question})
         try:
@@ -247,9 +260,12 @@ class Station:
                     results = []
                     for call in calls:   # all results go back to Claude in one message
                         report(ToolCall(call.name, call.input))
+                        report(McpMessage(True, "tools/call",
+                                          {"name": call.name, "arguments": call.input}))
                         pending.update(name=call.name, arguments=call.input)
                         result = await server.call_tool(call.name, call.input)
                         pending.clear()
+                        report(McpMessage(False, "result", as_json(result)))
                         results.append(self.tool_result(call, result, report))
                     self.messages.append({"role": "user", "content": results})
         except Exception as err:
@@ -285,6 +301,16 @@ class Station:
             message = self.messages.pop()
             if message["role"] == "user" and isinstance(message["content"], str):
                 break
+
+
+def as_json(message) -> dict:
+    """An MCP message's content as it goes over the wire, with each picture's data
+    replaced by its size."""
+    body = message.model_dump(by_alias=True, exclude_none=True, mode="json")
+    for item in body.get("content") or []:
+        if isinstance(item, dict) and item.get("type") == "image":
+            item["data"] = f"({len(base64.b64decode(item['data'])):,} bytes, not shown)"
+    return body
 
 
 def price(usage, prices: dict) -> float:
