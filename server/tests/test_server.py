@@ -161,13 +161,27 @@ async def test_zoom_returns_the_chosen_region_enlarged(server):
 
 @pytest.mark.parametrize("box, reason", [
     ({"left": 0.5, "top": 0.5, "width": 0.05, "height": 0.2}, "too small"),
+    ({"left": 0.2, "top": 0.5, "width": 0.6, "height": 0.05}, "too small"),
     ({"left": 0.8, "top": 0.0, "width": 0.4, "height": 0.4}, "outside the photo"),
-])
-async def test_zoom_refuses_bad_rectangles(server, box, reason):
+    ({"left": 0.0, "top": 0.8, "width": 0.4, "height": 0.4}, "outside the photo"),
+], ids=["too narrow", "too short", "past the right side", "past the bottom"])
+async def test_zoom_refuses_bad_rectangles(server, tmp_path, box, reason):
     async with Client(server) as client:
         image_id = await take_photo(client)
         result = await client.call_tool("zoom_image", {"image_id": image_id, **box})
-    assert result.is_error and reason in result.content[0].text
+    assert reason in result.content[0].text
+    assert result.is_error
+    assert log_lines(tmp_path, "audit.log")[-1].endswith(f"REFUSED zoom_image {image_id}: {reason}")
+
+
+async def test_zoom_takes_the_smallest_rectangle_right_up_to_the_corner(server):
+    # One tenth of the photo's width and height is allowed, and so is touching its edges.
+    async with Client(server) as client:
+        image_id = await take_photo(client)
+        result = await client.call_tool("zoom_image", {
+            "image_id": image_id, "left": 0.9, "top": 0.9, "width": 0.1, "height": 0.1})
+    assert "pixels 1440..1600 across and 810..900 down" in result.content[0].text
+    assert not result.is_error
 
 
 async def test_zoom_refuses_numbers_outside_0_to_1(server):
@@ -175,6 +189,7 @@ async def test_zoom_refuses_numbers_outside_0_to_1(server):
         image_id = await take_photo(client)
         result = await client.call_tool("zoom_image", {
             "image_id": image_id, "left": -0.5, "top": 0, "width": 0.5, "height": 0.5})
+    assert "left\n  Input should be greater than or equal to 0" in result.content[0].text
     assert result.is_error
 
 
@@ -277,22 +292,31 @@ async def test_one_record_per_photo(server, tmp_path):
     async with Client(server, elicitation_callback=nobody()) as client:
         image_id = await take_photo(client)
         await client.call_tool("record_inspection", record(image_id, "pass"))
+        result = await client.call_tool("record_inspection", record(image_id, "unsure"))
+        assert "already has an inspection record" in result.content[0].text
+        # A fail is refused too, before anyone is asked to confirm it:
         result = await client.call_tool("record_inspection", record(image_id, "fail"))
-    assert result.is_error and "already has an inspection record" in result.content[0].text
+    assert "already has an inspection record" in result.content[0].text
+    assert result.is_error
     assert len(log_lines(tmp_path, "inspections.jsonl")) == 1
+    assert log_lines(tmp_path, "audit.log")[-1].endswith(
+        f"REFUSED record_inspection {image_id}: already recorded")
 
 
-@pytest.mark.parametrize("change", [
-    {"image_id": "../../etc/passwd"},
-    {"part_id": "tray 07; rm -rf"},
-    {"part_id": "x" * 41},
-    {"verdict": "scrap"},
-    {"findings": ""},
-    {"findings": "x" * 501},
-])
-async def test_bad_inputs_are_refused(server, tmp_path, change):
+@pytest.mark.parametrize("change, refusal", [
+    ({"image_id": "../../etc/passwd"}, "String should match pattern"),
+    ({"part_id": "tray 07; rm -rf"}, "String should match pattern"),
+    ({"part_id": "x" * 41}, "String should match pattern"),
+    ({"verdict": "scrap"}, "Input should be 'pass', 'fail' or 'unsure'"),
+    ({"findings": ""}, "String should have at least 1 character"),
+    ({"findings": "x" * 501}, "String should have at most 500 characters"),
+], ids=["photo ID that is a path", "part ID with spaces", "part ID too long", "unknown verdict",
+        "no findings", "findings too long"])
+async def test_bad_inputs_are_refused(server, tmp_path, change, refusal):
     async with Client(server, elicitation_callback=nobody()) as client:
         image_id = await take_photo(client)
         result = await client.call_tool("record_inspection", record(image_id) | change)
+    [name] = change
+    assert f"{name}\n  {refusal}" in result.content[0].text   # refused for its shape
     assert result.is_error
     assert log_lines(tmp_path, "inspections.jsonl") == []

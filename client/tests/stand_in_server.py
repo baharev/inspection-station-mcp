@@ -21,9 +21,9 @@ class Confirmation(BaseModel):
     record: bool
 
 
-def photo() -> bytes:
+def photo(shade: int = 200) -> bytes:
     buffer = io.BytesIO()
-    PILImage.new("RGB", (64, 48), (200, 200, 200)).save(buffer, "JPEG")
+    PILImage.new("RGB", (64, 48), (shade, shade, shade)).save(buffer, "JPEG")
     return buffer.getvalue()
 
 
@@ -39,7 +39,8 @@ def stand_in_server():
         """Take a photo."""
         nonlocal taken
         taken += 1
-        return [f"Photo p{taken} (64x48 pixels)", Image(data=photo(), format="jpeg")]
+        return [f"Photo p{taken} (64x48 pixels)",   # each photo a shade of its own
+                Image(data=photo(250 - 30 * taken), format="jpeg")]
 
     @mcp.tool()
     async def zoom_image(image_id: str, left: float, top: float, width: float,

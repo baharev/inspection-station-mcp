@@ -7,7 +7,7 @@ server, not in the prompt. A page in the browser shows what the camera sees, liv
 A self-built demonstration of connecting a device to AI models through the
 [Model Context Protocol](https://modelcontextprotocol.io) (MCP), the standard way to
 plug tools, data and devices into AI applications such as Claude Code. It is small on
-purpose: about 670 lines of Python and 60 tests. It runs on one computer, or over the
+purpose: about 1,550 lines of Python and 140 tests. It runs on one computer, or over the
 network with a secret key or with logins and roles.
 
 This repository holds the server, a demo login server and a script for HTTPS
@@ -804,6 +804,17 @@ PowerShell and from its desktop shortcut, the server started and stopped (also b
 closing the window), for this computer and for others, the live view opened, the key
 copied, and a photo taken through MCP with the key.
 
+## How the tests were checked
+
+The tests were tested too: 28 bugs were planted in the code by hand, one at a time, each
+breaking one of the server's rules the way a developer could really get it wrong (a fail
+recorded without a person's yes, a thin crop let through, an expired login accepted, a
+near-miss key let in, and so on). At first, 11 were caught by a test that failed for the
+right reason with a clear message, and 9 got through with every test still passing. Each
+gap now has a test, and all 28 are caught. The bugs, grouped by the rule they break, and
+what each one showed: [docs/test-quality.md](docs/test-quality.md). The app's tests were
+checked the same way.
+
 ## Files
 
 - `inspection_server/server.py`: the MCP server: tools, rules, logs, key and login
@@ -826,6 +837,7 @@ copied, and a photo taken through MCP with the key.
   users and roles
 - `scripts/make_certs.sh`: certificates for HTTPS between two computers
 - `docs/setup.svg`: the figure of the setup
+- `docs/test-quality.md`: how the tests were checked, with bugs planted on purpose
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk),
 version 2.3.0.

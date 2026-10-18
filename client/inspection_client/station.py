@@ -214,8 +214,10 @@ class Station:
 
         async def confirm(context, params) -> ElicitResult:
             report(McpMessage(False, "elicitation/create", as_json(params)))
-            fields = list(params.requested_schema.get("properties", {}))
-            if len(fields) != 1:   # this app can only answer yes or no
+            properties = params.requested_schema.get("properties", {})
+            fields = list(properties)
+            types = [field.get("type") for field in properties.values()]
+            if types != ["boolean"]:   # this app can only answer yes or no
                 reply = ElicitResult(action="decline")
                 report(McpMessage(True, "result", as_json(reply)))
                 return reply

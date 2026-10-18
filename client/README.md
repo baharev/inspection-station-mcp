@@ -12,7 +12,7 @@ plug tools, data and devices into AI applications. The camera sits behind an MCP
 in the companion repository `inspection-mcp-server`; this repository holds a desktop app that uses
 it. Claude Code can use the server too, without this app: see the `inspection-mcp-server` README.
 The app is small on purpose: about
-1,000 lines of Python, using the official MCP and Anthropic libraries.
+1,100 lines of Python, using the official MCP and Anthropic libraries.
 
 Author: [Ali Baharev](https://baharev.info/)
 
@@ -420,6 +420,19 @@ the login server on a Linux computer, over HTTP and over HTTPS with `--trust` (a
 refused recording, an inspector's fail confirmed, the login renewed without asking
 again).
 
+## How the tests were checked
+
+The tests were tested too: 12 bugs were planted in the code by hand, one at a time, each
+breaking something the app must get right the way a developer could really get it wrong
+(No in the fail dialog passed on as yes, the dialog showing the wrong photo, the live view
+sent without the key, and so on). At first, 2 were caught by a test that failed for the
+right reason with a clear message, and 8 got through with every test still passing. Each
+gap now has a test, and all 12 are caught. Two parts that had no tests at all (how
+refusals are put into words, and how the start passes the key or login on) were then
+covered the same way, with 19 more planted bugs. The bugs and what each one showed:
+[docs/test-quality.md](docs/test-quality.md). The camera server's tests were checked the
+same way.
+
 ## Files
 
 - `inspection_client/station.py`: the work behind the window: the loop between Claude
@@ -432,7 +445,10 @@ again).
   any camera server offers them over MCP
 - `tests/test_login.py`: the app's part of the login, with a stand-in for the browser
 - `tests/test_dialog.py`: the confirmation dialog: Enter never marks a part as failed
+- `tests/test_main.py`: the app's start: which key or login, address and certificates
+  its parts are given
 - `docs/setup.svg`: the figure of the setup
+- `docs/test-quality.md`: how the tests were checked, with bugs planted on purpose
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 version 2.3.0, the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python)

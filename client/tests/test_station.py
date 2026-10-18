@@ -4,14 +4,23 @@ Claude is replaced by a script of answers (no cost, same result every time); the
 server by a stand-in with the same tools (stand_in_server.py), in-process.
 """
 
+import asyncio
+import contextlib
 import json
+from typing import Annotated
 
+import httpx2
 import pytest
 from anthropic.types import Message
 from mcp import Client
+from mcp.server import MCPServer
+from mcp.server.elicitation import ElicitationResult
+from mcp.server.mcpserver import Elicit, Resolve
+from pydantic import BaseModel
 
-from inspection_client.station import (Answer, CameraServerRefused, Done, McpMessage, Note,
-                                        Question, Station, ToolCall, ToolResult, describe)
+from inspection_client.station import (CAMERA_KEY_FILE, Answer, Done, KeyAuth, McpMessage, Note,
+                                        Question, Station, ToolCall, ToolResult, camera_client,
+                                        live_view)
 from stand_in_server import stand_in_server
 
 pytestmark = pytest.mark.anyio
@@ -72,7 +81,7 @@ def last_photo(request):
     """The ID of the photo taken last, as the server told Claude."""
     for message in reversed(request["messages"]):
         for block in message["content"] if isinstance(message["content"], list) else []:
-            if block.get("type") == "tool_result" and not block["is_error"]:
+            if block.get("type") == "tool_result" and not block.get("is_error"):
                 words = block["content"][0]["text"].split()
                 if words[0] == "Photo":
                     return words[1]
@@ -132,9 +141,11 @@ async def test_a_refusal_by_the_server_goes_back_to_claude(server):
     station = Station(claude, lambda confirm: Client(server, elicitation_callback=confirm))
     steps, _ = await run(station, "Look closer.")
 
-    refused = [s for s in steps if isinstance(s, ToolResult) and s.refused]
-    assert len(refused) == 1 and "too small" in refused[0].text
-    assert claude.requests[2]["messages"][-1]["content"][0]["is_error"] is True
+    photo, zoom = [s for s in steps if isinstance(s, ToolResult)]
+    assert "too small" in zoom.text
+    assert (photo.refused, zoom.refused) == (False, True)   # shown in red in the window
+    sent_back = claude.requests[2]["messages"][-1]["content"][0]
+    assert sent_back.get("is_error") is True, f"Claude was told the zoom worked: {sent_back}"
 
 
 @pytest.mark.parametrize("answer, server_got", [
@@ -166,15 +177,65 @@ async def test_the_person_answers_the_servers_question_about_a_fail(stand_in, an
     assert answered.sent and answered.body["action"] == ("cancel" if answer is None else "accept")
 
 
+async def test_the_dialog_shows_the_photo_being_recorded(server):
+    """Not the conversation's first photo, nor the latest one."""
+    claude = ScriptedClaude(
+        reply(tool("capture_image")), reply(text("One photo."), stop="end_turn"),
+        reply(tool("capture_image", 2)), reply(tool("capture_image", 3)),
+        reply(tool("record_inspection", 4, image_id="p2", part_id="tray-07", verdict="fail",
+                   findings="Hammer missing.")),
+        reply(text("Done."), stop="end_turn"))
+    station = Station(claude, lambda confirm: Client(server, elicitation_callback=confirm))
+    earlier, _ = await run(station, "Take a photo.")
+    steps, asked = await run(station, "Take two more and record the first of them.", [False])
+
+    photos = {s.text.split()[1]: s.pictures[0] for s in earlier + steps
+              if isinstance(s, ToolResult) and s.name == "capture_image"}
+    assert list(photos) == ["p1", "p2", "p3"]
+    assert [name for name, picture in photos.items() if picture == asked[0].picture] == ["p2"]
+
+
+class RecordWithReason(BaseModel):
+    record: bool
+    reason: str
+
+
+class Reason(BaseModel):
+    reason: str
+
+
+@pytest.mark.parametrize("asked_for", [RecordWithReason, Reason],
+                         ids=["yes or no plus a reason", "only a reason"])
+async def test_a_question_that_is_not_yes_or_no_is_declined_without_asking_the_person(asked_for):
+    server, got = MCPServer("asks more"), []
+
+    def ask_more(part_id: str):
+        return Elicit(f"Part {part_id}: mark it FAILED, and why?", asked_for)
+
+    @server.tool()
+    async def record_inspection(
+        part_id: str, answer: Annotated[ElicitationResult[asked_for], Resolve(ask_more)],
+    ) -> str:
+        got.append(answer.action)
+        return f"Recorded part {part_id}."
+
+    claude = ScriptedClaude(reply(tool("record_inspection", part_id="tray-07")),
+                            reply(text("Done."), stop="end_turn"))
+    station = Station(claude, lambda confirm: Client(server, elicitation_callback=confirm))
+    _, asked = await run(station, "Record it.", [True])
+    assert asked == [], "The person was asked a question that is not a plain yes or no."
+    assert got == ["decline"]
+
+
 async def test_cost_counts_every_step(server):
-    usage = {"input_tokens": 1_000_000, "output_tokens": 100_000,
-             "cache_read_input_tokens": 1_000_000, "cache_creation_input_tokens": 0}
-    claude = ScriptedClaude(reply(tool("capture_image"), usage=usage),
-                            reply(text("Done."), stop="end_turn", usage=usage))
+    usage = {"input_tokens": 1_000_000, "output_tokens": 100_000}
+    claude = ScriptedClaude(
+        reply(tool("capture_image"), usage=usage | {"cache_creation_input_tokens": 1_000_000}),
+        reply(text("Done."), stop="end_turn", usage=usage | {"cache_read_input_tokens": 1_000_000}))
     station = Station(claude, lambda confirm: Client(server, elicitation_callback=confirm))
     steps, _ = await run(station, "Photo?")
-    # per step: $4 input + $2 output + $0.20 cache reads
-    assert steps[-1].cost == pytest.approx(2 * 6.20)
+    # each step $4 input + $2 output; then $5 for cache writes, $0.20 for cache reads
+    assert steps[-1].cost == pytest.approx(11.00 + 6.20)
 
 
 async def test_after_a_failure_the_question_is_dropped(server):
@@ -189,7 +250,65 @@ async def test_after_a_failure_the_question_is_dropped(server):
     assert [m["role"] for m in station.messages] == ["user", "assistant"]
 
 
-def test_errors_are_told_in_words_a_person_can_act_on():
-    wrapped = ExceptionGroup("", [ExceptionGroup("", [CameraServerRefused(401)])])
-    assert "refused the key" in describe(wrapped)
-    assert "ends in /mcp" in describe(CameraServerRefused(404))
+FRAME = b"\xff\xd8 a frame"
+
+
+@pytest.fixture
+def camera_server(offline):
+    """Every HTTP request goes to a stand-in for the live view; the requests it got."""
+    got = []
+
+    def answer(request):
+        got.append(request)
+        if request.headers.get("Authorization") != "Bearer k1":
+            return httpx2.Response(401, text="No key or login token sent.")
+        return httpx2.Response(200, content=FRAME)
+
+    offline(answer)
+    return got
+
+
+async def watch(ready=lambda: True):
+    """The live view, until it shows a frame or says why it cannot."""
+    shown, told = [], []
+    live = asyncio.create_task(live_view("http://station:8000/live/frame.jpg", KeyAuth("k1"),
+                                         shown.append, told.append, ready=ready))
+    async with asyncio.timeout(5):
+        while not shown and not told:
+            await asyncio.sleep(0.01)
+    live.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await live
+    return shown, told
+
+
+async def test_the_live_view_sends_the_key(camera_server):
+    shown, told = await watch()
+    assert told == []
+    assert shown[0] == FRAME
+
+
+async def test_the_live_view_waits_for_the_login(camera_server):
+    shown, told = await watch(ready=lambda: False)
+    assert camera_server == [], ("The live view asked for a frame before the person logged in, "
+                                 "which starts a login of its own.")
+    assert told == ["Waiting for the login…"]
+
+
+KEY_REFUSED = {"WWW-Authenticate": 'Bearer error="invalid_token"'}
+LOGIN_WANTED = {"WWW-Authenticate": 'Bearer error="invalid_token", resource_metadata='
+                '"http://station:8000/.well-known/oauth-protected-resource/mcp"'}
+
+
+@pytest.mark.parametrize("status, headers, told", [
+    (404, {}, ["There is no camera server at this address", "ends in /mcp"]),
+    (401, KEY_REFUSED, ["refused the key", str(CAMERA_KEY_FILE)]),
+    (401, LOGIN_WANTED, ["takes logins, not its key", "--login"]),
+], ids=["nothing at the address", "key refused", "logins wanted"])
+async def test_errors_are_told_in_words_a_person_can_act_on(offline, status, headers, told):
+    offline(lambda request: httpx2.Response(status, headers=headers))
+    station = Station(ScriptedClaude(), lambda confirm: camera_client(
+        "http://station:8000/mcp", KeyAuth("k1"), confirm))
+    steps, _ = await run(station, "Photo?")
+    problem = steps[-1].problem
+    assert all(words in problem for words in told), f"The person was told: {problem}"

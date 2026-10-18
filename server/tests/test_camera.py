@@ -122,9 +122,11 @@ def test_a_slow_camera_is_waited_for_as_long_as_frames_keep_coming(monkeypatch):
     assert number(camera.take()) >= camera.WARM_UP
 
 
-def test_a_camera_that_sends_another_size_than_chosen_is_refused(monkeypatch):
-    camera, _ = stand_in_camera(monkeypatch, size=(32, 24))
-    with pytest.raises(CameraError, match="sends photos of 32x24 pixels, not the 64x48 chosen"):
+@pytest.mark.parametrize("size", [(32, 24), (64, 36)], ids=["smaller", "same width, less high"])
+def test_a_camera_that_sends_another_size_than_chosen_is_refused(monkeypatch, size):
+    camera, _ = stand_in_camera(monkeypatch, size=size)
+    with pytest.raises(CameraError, match=f"sends photos of {size[0]}x{size[1]} pixels, "
+                                          "not the 64x48 chosen"):
         camera.take()
 
 
@@ -184,6 +186,7 @@ def test_on_windows_and_macos_the_setting_must_match_exactly_one_camera(monkeypa
             RealCamera(device).check()
 
 
+@pytest.mark.usefixtures("server_must_not_start")
 def test_the_server_does_not_start_without_its_camera(monkeypatch):
     monkeypatch.setenv("CAMERA", "no-such-camera")
     monkeypatch.setattr("sys.argv", ["inspection-server"])

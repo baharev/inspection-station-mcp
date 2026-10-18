@@ -79,7 +79,8 @@ def token(user="inspector", roles=("viewer", "inspector"), key=LOGIN_SERVER_KEY,
 
 
 def audit_lines(tmp_path):
-    return (tmp_path / "data" / "logs" / "audit.log").read_text().splitlines()
+    path = tmp_path / "data" / "logs" / "audit.log"
+    return path.read_text().splitlines() if path.exists() else []
 
 
 @asynccontextmanager
@@ -92,11 +93,16 @@ async def http(app, headers=None, client=THIS_COMPUTER):
 
 
 @pytest.mark.parametrize("headers", [None, {"Authorization": "Bearer wrong"},
-                                     {"Authorization": KEY}])   # no "Bearer"
+                                     {"Authorization": KEY},
+                                     {"Authorization": f"Bearer {KEY[:-1]}x"},
+                                     {"Authorization": f"Bearer {KEY[:16]}"},
+                                     {"Authorization": f"Bearer {KEY}x"}],
+                         ids=["no key", "wrong key", "key without Bearer", "last character wrong",
+                              "first half of the key", "key with a character added"])
 async def test_requests_without_the_key_are_refused(app, headers, tmp_path):
     async with http(app, headers, client=ELSEWHERE) as client:
         response = await client.post(URL, json={})
-    assert response.status_code == 401
+    assert response.status_code == 401, "let in: the key check accepted this"
     # Refused before any tool runs, and still in the audit log:
     reason = "no key or login token sent" if headers is None else "key or login token not accepted"
     assert [line.split(" ", 1)[1] for line in audit_lines(tmp_path)] == [
@@ -124,15 +130,22 @@ async def test_the_server_tells_clients_which_login_server_to_use(login_app):
 
 
 @pytest.mark.parametrize("bad", [
-    {"aud": "http://localhost:9000/mcp"},          # issued for another server
-    {"iss": "http://localhost:8080/realms/other"},  # from another login server
-    {"exp": int(time.time()) - 10},               # expired
-    {"key": OTHER_KEY},                           # not signed by the login server
-])
+    {"aud": "http://localhost:9000/mcp"},
+    {"iss": "http://localhost:8080/realms/other"},
+    {"exp": int(time.time()) - 10},
+    {"key": OTHER_KEY},
+], ids=["issued for another server", "from another login server", "expired",
+        "not signed by the login server"])
 async def test_tokens_that_do_not_fit_are_refused(login_app, bad):
-    async with http(login_app, token(**bad)) as client:
+    headers = token(**bad)
+    async with http(login_app, headers) as client:
         response = await client.post(URL, json={})
-    assert response.status_code == 401
+    assert response.status_code == 401, "let in: the token was accepted"
+    # By the server's own check too, not only the SDK's (which also refuses expired tokens):
+    verifier = oauth_auth(ISSUER, URL, signing_key=lambda t: LOGIN_SERVER_KEY.public_key())
+    accepted = await verifier["token_verifier"].verify_token(
+        headers["Authorization"].removeprefix("Bearer "))
+    assert accepted is None, "the server's own token check accepted it"
 
 
 async def test_an_inspector_records_under_their_name(login_app, tmp_path):
@@ -173,7 +186,8 @@ async def test_roles_sent_as_text_count_for_nothing(login_app):
         async with Client(streamable_http_client(URL, http_client=client)) as mcp:
             result = await mcp.call_tool("capture_image", {})
         live = await client.get("http://localhost:8000/live/frame.jpg")
-    assert result.is_error and "needs the role 'viewer'" in result.content[0].text
+    assert "needs the role 'viewer'" in result.content[0].text   # not a photo
+    assert result.is_error
     assert live.status_code == 403
 
 
@@ -181,8 +195,8 @@ async def test_a_login_without_roles_may_do_nothing(login_app):
     async with http(login_app, token("guest", roles=[])) as client:
         async with Client(streamable_http_client(URL, http_client=client)) as mcp:
             result = await mcp.call_tool("capture_image", {})
+    assert "needs the role 'viewer'" in result.content[0].text   # not a photo
     assert result.is_error
-    assert "needs the role 'viewer'" in result.content[0].text
 
 
 def test_an_unreachable_login_server_stops_the_start_with_a_message():
@@ -194,8 +208,10 @@ def test_an_unreachable_login_server_stops_the_start_with_a_message():
     assert "Is the login server running" in str(stop.value.code)
 
 
-def test_a_login_server_on_another_computer_needs_https():
+def test_a_login_server_on_another_computer_needs_https(monkeypatch):
     # Its keys decide which tokens are genuine: over plain HTTP they could be replaced.
+    monkeypatch.setattr("inspection_server.server.urlopen", lambda url, timeout: pytest.fail(
+        f"The login server was asked for its settings over plain HTTP: {url}"))
     with pytest.raises(SystemExit) as stop:
         oauth_auth("http://192.0.2.7:8080/realms/inspection", URL)
     assert "must be reached over HTTPS" in str(stop.value.code)
@@ -344,7 +360,7 @@ async def test_forged_and_tampered_tokens_are_refused(published_login_app, forge
     async with http(app, headers, client=ELSEWHERE) as client:
         response = await client.post(URL, json={})
         live = await client.get(LIVE, headers=headers)
-    assert response.status_code == 401 and live.status_code == 401
+    assert (response.status_code, live.status_code) == (401, 401), "let in: the token was accepted"
     assert set(fetched) <= {KEYS_URL}   # never the attacker's keys
     assert [line.split(" ", 1)[1] for line in audit_lines(tmp_path)] == [
         f"unknown REFUSED {path} from 192.0.2.5: key or login token not accepted"
@@ -393,11 +409,15 @@ async def test_a_refused_token_is_refused_on_this_computer_too(login_app, tmp_pa
         "unknown REFUSED /live/frame.jpg from 127.0.0.1: key or login token not accepted"]
 
 
-@pytest.mark.parametrize("headers", [None, {"Authorization": "Bearer wrong"}])
-async def test_other_computers_need_the_key_for_the_live_view(app, headers):
+@pytest.mark.parametrize("headers, url", [
+    (None, LIVE),
+    ({"Authorization": "Bearer wrong"}, LIVE),
+    (None, "http://localhost:8000/live/frame.jpg"),   # any computer can send that name
+], ids=["no key", "wrong key", "no key, calling the server localhost"])
+async def test_other_computers_need_the_key_for_the_live_view(app, headers, url):
     async with http(app, headers, client=ELSEWHERE) as client:
-        response = await client.get(LIVE)
-    assert response.status_code == 401
+        response = await client.get(url)
+    assert response.status_code == 401, "the camera picture was sent"
 
 
 async def test_other_computers_see_the_live_view_with_the_key(app, tmp_path):
@@ -442,7 +462,7 @@ def test_the_first_start_makes_the_key_file_and_later_starts_reuse_it(tmp_path, 
     key = secret_key(path)
     assert len(key) >= 32 and path.read_text().strip() == key
     if sys.platform != "win32":
-        assert path.stat().st_mode & 0o777 == 0o600   # readable by this user only
+        assert oct(path.stat().st_mode & 0o777) == "0o600"   # readable by this user only
     assert secret_key(path) == key
 
 

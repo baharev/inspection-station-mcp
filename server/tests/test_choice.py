@@ -83,8 +83,9 @@ def test_a_single_camera_is_still_chosen_by_a_person(cameras):
     cameras[:] = [C270]
     shown = []
     picked = choice.for_start(False, True, read=answers("1", ""), say=shown.append)
-    assert picked.device == C270[0]
+    assert shown[0] == "Which camera should the server use?"   # asked, even with one camera
     assert f"  2  {choice.SAMPLE_PHOTOS}" in shown
+    assert picked.device == C270[0]
 
 
 def test_without_a_person_to_ask_the_server_stops_instead_of_guessing(cameras):
@@ -146,6 +147,7 @@ def test_on_windows_a_camera_is_saved_by_name_unless_two_share_it(cameras, monke
                                      (choice.FAKE, choice.SAMPLE_PHOTOS)]
 
 
+@pytest.mark.usefixtures("server_must_not_start")
 def test_claude_code_starting_the_server_with_no_camera_chosen_gets_the_reason(monkeypatch):
     monkeypatch.setattr("sys.argv", ["inspection-server"])
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
@@ -154,6 +156,7 @@ def test_claude_code_starting_the_server_with_no_camera_chosen_gets_the_reason(m
     assert "inspection-server --choose-camera" in str(stop.value.code)
 
 
+@pytest.mark.usefixtures("server_must_not_start")
 def test_a_chosen_camera_that_is_unplugged_stops_the_server_with_what_to_do(tmp_path, monkeypatch):
     choice.save(choice.Choice(str(tmp_path / "unplugged"), "Old Webcam (plugged in)", "",
                               (640, 480)))

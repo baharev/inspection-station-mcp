@@ -1,6 +1,9 @@
-"""The fail confirmation: Enter never marks a part as failed, and it fits on the screen."""
+"""The fail confirmation: the button clicked is the answer, Enter never marks a part as
+failed, and the dialog fits on the screen."""
 
 import os
+
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")   # no screen needed
 
@@ -15,8 +18,8 @@ from inspection_client.station import Question
 app = QApplication.instance() or QApplication([])
 
 
-def answer_with_enter(move_focus_to: str | None = None) -> int:
-    """1 for yes, 2 for no, as the dialog ends."""
+def answer_with_enter(move_focus_to: str | None = None) -> str:
+    """What the dialog's answer means for the part."""
     dialog = ConfirmDialog(None, Question("The AI found a problem with part tray-01.", None))
 
     def press():
@@ -25,16 +28,31 @@ def answer_with_enter(move_focus_to: str | None = None) -> int:
                  if b.text().startswith(move_focus_to)).setFocus()
         QTest.keyClick(dialog.focusWidget(), Qt.Key.Key_Return)
     QTimer.singleShot(50, press)
-    QTimer.singleShot(2000, dialog.reject)   # never hang: closed unanswered is 0
-    return dialog.exec()
+    QTimer.singleShot(2000, dialog.reject)   # never hang
+    return {1: "marked FAILED", 2: "put aside"}.get(dialog.exec(), "closed unanswered")
 
 
 def test_enter_puts_the_part_aside():
-    assert answer_with_enter() == 2
+    assert answer_with_enter() == "put aside"
 
 
 def test_enter_puts_the_part_aside_even_with_the_focus_on_yes():
-    assert answer_with_enter(move_focus_to="Yes") == 2
+    assert answer_with_enter(move_focus_to="Yes") == "put aside"
+
+
+@pytest.mark.parametrize("button, answer", [("Yes", True), ("No", False), (None, None)],
+                         ids=["yes", "no", "closed"])
+def test_the_button_clicked_is_the_answer_passed_on(button, answer):
+    def click():
+        dialog = app.activeModalWidget()
+        if button:
+            next(b for b in dialog.findChildren(QPushButton)
+                 if b.text().startswith(button)).click()
+        else:
+            dialog.reject()   # closed with the window's X or Escape
+    QTimer.singleShot(50, click)
+    QTimer.singleShot(2000, lambda: app.activeModalWidget() and app.activeModalWidget().reject())
+    assert ConfirmDialog.ask(None, Question("Part tray-01: mark it FAILED?", None)) is answer
 
 
 def test_the_dialog_fits_on_a_small_screen():
