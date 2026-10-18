@@ -12,7 +12,7 @@ plug tools, data and devices into AI applications. The camera sits behind an MCP
 in the companion repository `inspection-mcp-server`; this repository holds a desktop app that uses
 it. Claude Code can use the server too, without this app: see the `inspection-mcp-server` README.
 The app is small on purpose: about
-1,100 lines of Python, using the official MCP and Anthropic libraries.
+1,200 lines of Python, using the official MCP and Anthropic libraries.
 
 Author: [Ali Baharev](https://baharev.info/)
 
@@ -20,7 +20,7 @@ Author: [Ali Baharev](https://baharev.info/)
 
 You need two things first:
 
-- **The camera server, running on this computer**: see the Quick start of the
+- **The inspection server, running on this computer**: see the Quick start of the
   `inspection-mcp-server` README. Its sample photos work without a camera.
 - **A Claude API key** in the file `~/.config/anthropic/api-key`: see
   [Your Claude API key](#your-claude-api-key).
@@ -76,11 +76,14 @@ In this demo, each photo stands for one part, and there is no production line: r
 an outcome means writing one line to the inspection log, and nothing is moved or
 scrapped. Claude looks at the photo and decides pass, fail or unsure. A pass or an unsure
 is written down straight away. A fail is not: wrongly scrapping a good part costs money,
-so the camera server asks a person first, and this app shows that question as a dialog,
-with the photo. If you agree, the part is marked as failed. If you say no, or close the
+so the inspection server asks a person first, and this app shows that question as a dialog,
+with the photo; your answer then shows in the conversation too. If you agree, the part is
+marked as failed. If you say no, or close the
 dialog without answering, the part is marked as unsure, to be put aside for a person to
 look at, and the log says that Claude called it a fail and what your answer was. Every
-part checked ends up in the log.
+part Claude records ends up in the log, and every fail question is logged when it is
+asked. You have an hour to answer: an answer that comes later, or after the inspection
+server was restarted, records nothing; the window then says so, and you ask again.
 
 ![The setup. Left: the inspection station, where no AI runs: a camera above a conveyor belt, and the station computer with the MCP server, which keeps the inspection log. Right: the operator's computer with the desktop app, which talks to the MCP server over the network and to Claude, the AI, on the internet.](docs/setup.svg)
 
@@ -91,19 +94,21 @@ serves stored photos instead.
 ## What it does, step by step
 
 1. You type a question and press Enter.
-2. The app sends Claude the conversation, and the camera server's tools: take a photo,
+2. The app sends Claude the conversation, and the inspection server's tools: take a photo,
    look closer at part of a photo, record an inspection result.
-3. When Claude asks for a tool, the app passes the call on to the camera server and
+3. When Claude asks for a tool, the app passes the call on to the inspection server and
    gives the result, photos included, back to Claude. The window shows each step, in
    gray below your question: what Claude asked for, in plain words, and what came back.
    Tick "Show MCP messages" to see the messages themselves as well, as the Model
-   Context Protocol sends them between the app and the camera server: indented, one
+   Context Protocol sends them between the app and the inspection server: indented, one
    field per line, each message between two thin lines. Where a text holds JSON of its
    own, such as the inspection record, that JSON is shown unpacked, not as one string
-   full of escapes.
+   full of escapes. A fail question comes back as the call's result, with the server's
+   sealed state (shortened in the window); the dialog shows, and the call goes to the
+   server again with your answer and that state.
 4. Steps 2 and 3 repeat until Claude answers.
 
-The rules live in the camera server, not in the app and not in what Claude is told: the
+The rules live in the inspection server, not in the app and not in what Claude is told: the
 server caps the photo size, refuses zooms too small to show anything but blur, keeps one
 record per photo, logs every action, and asks a person before marking a part as
 failed. The app only passes the server's question on to you, and your answer back. A refusal from the
@@ -123,7 +128,7 @@ tested on Linux and Windows; macOS is not tested yet. The commands are for Linux
 should work the same in the macOS Terminal; for PowerShell, see
 [On Windows](#on-windows).
 
-The app and the camera server are separate programs. The app talks to the server only
+The app and the inspection server are separate programs. The app talks to the server only
 over the network, through MCP, even when both run on one computer; it needs no part of
 the server installed beside it. So each has a Python environment of its own: the
 server's is made as its README describes, and the app's as below. There are two ways to
@@ -185,7 +190,7 @@ Activating conda's own `base` environment is not enough: the app is in `inspecti
 
 The command `inspection-client`, which starts the app. It exists only inside the
 environment: in a terminal where it is not active, the answer is "command not found".
-The tests use stand-ins for the camera server and for Claude, so they need no server, no
+The tests use stand-ins for the inspection server and for Claude, so they need no server, no
 camera, no key and no internet.
 
 ## Your Claude API key
@@ -218,13 +223,13 @@ well.
 
 Every terminal below needs an environment active first: for the app, its own, the way
 you installed it (`source .venv/bin/activate` in this repository's folder, or
-`conda activate inspection-client`); for the camera server, the server's, as its README describes.
+`conda activate inspection-client`); for the inspection server, the server's, as its README describes.
 
 | Your situation | What you start | See |
 |---|---|---|
-| Try it on one computer, no camera needed | The camera server with its fake camera, then the app | [Try it on one computer](#try-it-on-one-computer) |
-| The camera on one computer, the app on another | The camera server on the station computer, the app on yours | [The camera on another computer](#the-camera-on-another-computer) |
-| Each person logs in with their own name and role, instead of one shared key | A login server, the camera server with logins, then the app with `--login` | [Logins with roles](#logins-with-roles) |
+| Try it on one computer, no camera needed | The inspection server with its fake camera, then the app | [Try it on one computer](#try-it-on-one-computer) |
+| The camera on one computer, the app on another | The inspection server on the station computer, the app on yours | [The camera on another computer](#the-camera-on-another-computer) |
+| Each person logs in with their own name and role, instead of one shared key | A login server, the inspection server with logins, then the app with `--login` | [Logins with roles](#logins-with-roles) |
 | You want Claude Code instead of this app | Nothing from this repository | [With Claude Code instead](#with-claude-code-instead) |
 
 ## Try it on one computer
@@ -233,7 +238,7 @@ Without a camera, the server can use a fake one, which serves stored photos of t
 scenes (a tool tray, watches, packs, a scale, a gauge), a new one for every photo taken.
 
 **In a first terminal**, with the server's environment active, in the folder
-`inspection-mcp-server`, start the camera server, and leave it running:
+`inspection-mcp-server`, start the inspection server, and leave it running:
 
 ```
 inspection-server --http
@@ -267,7 +272,7 @@ server took are in `inspection-mcp-server/captures/`, its logs in `inspection-mc
 
 ## The camera on another computer
 
-The station computer runs the camera server, as described in the `inspection-mcp-server` README,
+The station computer runs the inspection server, as described in the `inspection-mcp-server` README,
 section "The camera on one computer, Claude Code on another": choose the camera, start
 the server with `--http --host 0.0.0.0`, and copy its key file to the app's computer, to
 the same place: `~/.config/inspection-server/api-key`. That section's steps for Claude
@@ -281,19 +286,19 @@ station computer shows it):
 inspection-client --server http://192.168.0.20:8000/mcp
 ```
 
-If something is wrong, the window says what: the camera server cannot be reached (is it
+If something is wrong, the window says what: the inspection server cannot be reached (is it
 running, with `--host 0.0.0.0`, and does a firewall let port 8000 through?), it refused
-the key (the key files differ), or there is no camera server at that address.
+the key (the key files differ), or there is no inspection server at that address.
 
 ## Logins with roles
 
 Instead of one key that everyone shares, each person can log in with their own name.
-The camera server then knows who asks, writes the name into every log line and record,
+The inspection server then knows who asks, writes the name into every log line and record,
 and lets each person do only what their role allows: a `viewer` may take photos, look
 closer and watch the live view; an `inspector` may also record results. The login
-happens in the browser, at a login server, which hands the app a token that the camera
-server checks. The `inspection-mcp-server` README, section "Logins with roles", explains this in
-more detail; its script `scripts/keycloak.sh` starts a demo login server
+happens in the browser, at a login server, which hands the app a token that the
+inspection server checks. The `inspection-mcp-server` README, section "Logins with
+roles", explains this in more detail; its script `scripts/keycloak.sh` starts a demo login server
 ([Keycloak](https://www.keycloak.org/), in a container; needs [podman](https://podman.io/))
 with two users: `inspector` (password `inspector`) and `viewer` (password `viewer`).
 This app is registered there in advance as `inspection-client`, the way an
@@ -307,7 +312,7 @@ scripts/keycloak.sh
 ```
 
 It is ready when it shows "Listening on". In a second terminal with the server's
-environment active, in the folder `inspection-mcp-server`, start the camera server with logins
+environment active, in the folder `inspection-mcp-server`, start the inspection server with logins
 instead of its key:
 
 ```
@@ -324,7 +329,7 @@ inspection-client --login
 The app opens the login page in your browser. Log in as `viewer`; the browser says
 "Logged in", and the window "Logged in as viewer". Ask, for example, "Take a photo. Is
 the tool tray complete? Record it as part tray-01." (The fake camera serves its photos
-in turn, the complete tool tray first.) The camera server refuses to record, with the
+in turn, the complete tool tray first.) The inspection server refuses to record, with the
 reason, shown in red; Claude reads the refusal and tells you. Close the window, start
 the app again, and log in as `inspector` (if the login page offers `viewer` again, the
 round arrows next to the name start over with another user). Ask "Take a photo. Check
@@ -339,9 +344,9 @@ long as the login server allows.
 
 **The camera on another computer**: the token travels with every request, so over the
 network it should be encrypted (HTTPS); Claude Code, for one, sends logins only over
-HTTPS or to `localhost`. On the station computer, start the login server and the camera
-server with certificates, as the `inspection-mcp-server` README describes in "Logins with roles",
-"Logins on two computers". Copy `certs/ca.pem` from there to the app's computer, into
+HTTPS or to `localhost`. On the station computer, start the login server and the
+inspection server with certificates, as the `inspection-mcp-server` README describes in
+"Logins with roles", "Logins on two computers". Copy `certs/ca.pem` from there to the app's computer, into
 the folder you start the app in, and start it with the station computer's address (here
 192.168.0.20):
 
@@ -353,14 +358,14 @@ inspection-client --login --server https://192.168.0.20:8000/mcp --trust ca.pem
 authority, `ca.pem`. The browser warns about the private certificate on the login page
 once; accept it, or import `ca.pem` into the browser.
 
-If something is wrong, the window says what, for example that the camera server takes
+If something is wrong, the window says what, for example that the inspection server takes
 logins and the app was started without `--login`, or that the address given with
-`--server` differs from the one the camera server was started with (`SERVER_URL`): it
+`--server` differs from the one the inspection server was started with (`SERVER_URL`): it
 must be the same, letter for letter.
 
 ## With Claude Code instead
 
-Claude Code connects to the camera server directly, so it needs nothing from this
+Claude Code connects to the inspection server directly, so it needs nothing from this
 repository: the `inspection-mcp-server` README shows how, in its Quick start and in "Try it on one
 computer".
 
@@ -401,7 +406,7 @@ instead, which the app does not read.
 A setting written in front of a command, as in `OAUTH_ISSUER=... inspection-server
 --http` in [Logins with roles](#logins-with-roles), is a line of its own in PowerShell,
 starting with `$env:`; it holds until the window is closed. A `\` at the end of a line
-means the command goes on in the next one. For the camera server with logins, with the
+means the command goes on in the next one. For the inspection server with logins, with the
 server's environment active, in the folder `inspection-mcp-server`:
 
 ```
@@ -430,30 +435,35 @@ right reason with a clear message, and 8 got through with every test still passi
 gap now has a test, and all 12 are caught. Two parts that had no tests at all (how
 refusals are put into words, and how the start passes the key or login on) were then
 covered the same way, with 19 more planted bugs. The bugs and what each one showed:
-[docs/test-quality.md](docs/test-quality.md). The camera server's tests were checked the
+[docs/test-quality.md](docs/test-quality.md). The inspection server's tests were checked the
 same way.
 
 ## Files
 
 - `inspection_client/station.py`: the work behind the window: the loop between Claude
-  and the camera server, the costs, and errors in plain words
+  and the inspection server, the costs, and errors in plain words
 - `inspection_client/app.py`: the window: live view, conversation, confirmation dialog
 - `inspection_client/login.py`: the login in the browser (the MCP SDK does the rest)
-- `tests/test_station.py`: the loop, against stand-ins for the camera server and for
+- `tests/test_station.py`: the loop, against stand-ins for the inspection server and for
   Claude
-- `tests/stand_in_server.py`: the stand-in for the camera server: the same tools, as
-  any camera server offers them over MCP
+- `tests/stand_in_server.py`: the stand-in for the inspection server: the same tools, as
+  any inspection server offers them over MCP
 - `tests/test_login.py`: the app's part of the login, with a stand-in for the browser
+- `tests/test_window.py`: the conversation in the window (MCP messages only when asked
+  for, pictures and links, your answer to a fail question), the live view's "try again",
+  and the status line checked again once the live view is back
 - `tests/test_dialog.py`: the confirmation dialog: Enter never marks a part as failed
 - `tests/test_main.py`: the app's start: which key or login, address and certificates
   its parts are given
+- `tests/conftest.py`: what several test files share: HTTP to stand-ins, never the
+  network
 - `docs/setup.svg`: the figure of the setup
 - `docs/test-quality.md`: how the tests were checked, with bugs planted on purpose
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 version 2.3.0, the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python)
 version 1.15.0, and [PySide6](https://doc.qt.io/qtforpython-6/) (Qt for Python) version
-6.12.0.
+6.12.0, its essential modules only (the package `PySide6-Essentials`).
 
 ## License
 

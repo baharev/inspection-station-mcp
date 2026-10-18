@@ -30,7 +30,8 @@ from mcp.client.streamable_http import streamable_http_client
 from PIL import Image
 
 from inspection_server.camera import FakeCamera
-from inspection_server.server import create_server, http_app, key_auth, oauth_auth, secret_key
+from inspection_server.server import (CLOCK_LEEWAY, create_server, http_app, key_auth,
+                                      oauth_auth, secret_key)
 
 pytestmark = pytest.mark.anyio
 
@@ -39,11 +40,7 @@ URL = "http://127.0.0.1:8000/mcp"   # the port is never opened
 THIS_COMPUTER = ("127.0.0.1", 50000)   # where a request comes from
 ELSEWHERE = ("192.0.2.5", 50000)
 LIVE = "http://192.0.2.2:8000/live/frame.jpg"   # as other computers address the server
-
-
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
+EXPIRED = int(time.time()) - CLOCK_LEEWAY - 10   # beyond what a clock off by a little explains
 
 
 ISSUER = "http://localhost:8080/realms/inspection"
@@ -132,7 +129,7 @@ async def test_the_server_tells_clients_which_login_server_to_use(login_app):
 @pytest.mark.parametrize("bad", [
     {"aud": "http://localhost:9000/mcp"},
     {"iss": "http://localhost:8080/realms/other"},
-    {"exp": int(time.time()) - 10},
+    {"exp": EXPIRED},
     {"key": OTHER_KEY},
 ], ids=["issued for another server", "from another login server", "expired",
         "not signed by the login server"])
@@ -152,7 +149,7 @@ async def test_an_inspector_records_under_their_name(login_app, tmp_path):
     async with http(login_app, token("inspector")) as client:
         async with Client(streamable_http_client(URL, http_client=client)) as mcp:
             photo = await mcp.call_tool("capture_image", {})
-            image_id = photo.content[0].text.split()[1]
+            image_id = photo.structured_content["image_id"]
             result = await mcp.call_tool("record_inspection", {
                 "image_id": image_id, "part_id": "tray-07", "verdict": "pass",
                 "findings": "All tools present."})
@@ -169,7 +166,7 @@ async def test_a_viewer_may_look_but_not_record(login_app, tmp_path):
         async with Client(streamable_http_client(URL, http_client=client),
                           elicitation_callback=nobody) as mcp:
             photo = await mcp.call_tool("capture_image", {})
-            image_id = photo.content[0].text.split()[1]
+            image_id = photo.structured_content["image_id"]
             for verdict in ("pass", "fail"):
                 result = await mcp.call_tool("record_inspection", {
                     "image_id": image_id, "part_id": "tray-07", "verdict": verdict,
@@ -242,6 +239,18 @@ def test_the_login_servers_keys_from_another_computer_need_https(monkeypatch):
 def test_a_login_server_that_fits_is_used(monkeypatch):
     login_server_settings(monkeypatch)
     assert oauth_auth(ISSUER + "/", URL)["token_verifier"].issuer == ISSUER
+
+
+@pytest.mark.parametrize("configured", [ISSUER, ISSUER + "/"], ids=["set without", "set with"])
+async def test_a_login_server_whose_name_ends_in_a_slash_is_taken_at_its_word(monkeypatch,
+                                                                              configured):
+    # Some login servers (Auth0, for one) publish a name ending in "/" and put it in their
+    # tokens so: a token is checked against the name exactly as published.
+    login_server_settings(monkeypatch, issuer=ISSUER + "/")
+    verifier = oauth_auth(configured, URL)["token_verifier"]
+    verifier.signing_key = lambda token: LOGIN_SERVER_KEY.public_key()
+    assert await verifier.verify_token(signed(claims(iss=ISSUER + "/"))), "its token was refused"
+    assert await verifier.verify_token(signed(claims(iss=ISSUER))) is None
 
 
 def test_an_untrusted_login_server_certificate_is_named_in_the_message(monkeypatch):
@@ -321,11 +330,11 @@ FORGED = {
     "the issuer with a slash added": signed(claims(iss=ISSUER + "/")),
     "issued for another server": signed(claims(aud="http://localhost:9000/mcp")),
     "issued for no server": signed(claims(aud=None)),
-    "expired": signed(claims(exp=int(time.time()) - 10)),
+    "expired": signed(claims(exp=EXPIRED)),
     "no expiry": signed(claims(exp=None)),
     "no user": signed(claims(sub=None)),
-    "not valid yet": signed(claims(nbf=int(time.time()) + 600)),
-    "issued in the future": signed(claims(iat=int(time.time()) + 600)),
+    "not valid yet": signed(claims(nbf=int(time.time()) + CLOCK_LEEWAY + 600)),
+    "issued in the future": signed(claims(iat=int(time.time()) + CLOCK_LEEWAY + 600)),
     "another algorithm, RS512": signed(algorithm="RS512"),
     "another algorithm, PS256": signed(algorithm="PS256"),
     "no key name": signed(kid=None),
@@ -367,8 +376,10 @@ async def test_forged_and_tampered_tokens_are_refused(published_login_app, forge
         for path in ("/mcp", "/live/frame.jpg")]
 
 
-@pytest.mark.parametrize("fair", [signed(), signed(claims(aud=["account", URL]))],
-                         ids=["for this server", "for several servers, this one among them"])
+@pytest.mark.parametrize("fair", [signed(), signed(claims(aud=["account", URL])),
+                                  signed(claims(iat=int(time.time()) + 2))],
+                         ids=["for this server", "for several servers, this one among them",
+                              "from a login server whose clock is 2 seconds ahead"])
 async def test_a_token_from_the_login_server_is_accepted(published_login_app, fair):
     app, fetched = published_login_app
     async with http(app, {"Authorization": f"Bearer {fair}"}, client=ELSEWHERE) as client:
@@ -403,7 +414,7 @@ async def test_a_refused_token_is_refused_on_this_computer_too(login_app, tmp_pa
     # expired token must not turn it into "local".
     async with http(login_app) as client:
         response = await client.get("http://localhost:8000/live/frame.jpg",
-                                    headers=token("viewer", exp=int(time.time()) - 10))
+                                    headers=token("viewer", exp=EXPIRED))
     assert response.status_code == 401
     assert [line.split(" ", 1)[1] for line in audit_lines(tmp_path)] == [
         "unknown REFUSED /live/frame.jpg from 127.0.0.1: key or login token not accepted"]

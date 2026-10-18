@@ -1,7 +1,7 @@
 """The app's start: which key or login, address and certificates its parts are given.
 
 main() runs as it is, with the window, Qt and the key files replaced: nothing opens, no
-key is read, and the camera server is never reached.
+key is read, and the inspection server is never reached.
 """
 
 import inspect
@@ -13,7 +13,7 @@ import pytest
 from PySide6.QtCore import QSize
 
 from inspection_client import app
-from inspection_client.station import (CAMERA_KEY_FILE, CLAUDE_KEY_FILE, KeyAuth, camera_client,
+from inspection_client.station import (SERVER_KEY_FILE, CLAUDE_KEY_FILE, KeyAuth, server_client,
                                         live_view)
 
 KEYS = {"API_KEY": "camera key", "ANTHROPIC_API_KEY": "Claude key"}
@@ -30,7 +30,7 @@ def called_with(function):
 
 def start(monkeypatch, *arguments):
     """Runs main() with these command-line arguments. Returns what the station's
-    connection to the camera server and the live view were given, and the keys read."""
+    connection to the inspection server and the live view were given, and the keys read."""
     keys_read = []
 
     def read_key(variable, path):
@@ -41,7 +41,7 @@ def start(monkeypatch, *arguments):
                           "screen.return_value.availableSize.return_value": QSize(1920, 1080)})
     Window, Worker = MagicMock(return_value=window), MagicMock()
     for name, stand_in in {"QApplication": MagicMock(), "Window": Window, "Worker": Worker,
-                           "read_key": read_key, "camera_client": called_with(camera_client),
+                           "read_key": read_key, "server_client": called_with(server_client),
                            "live_view": called_with(live_view)}.items():
         monkeypatch.setattr(app, name, stand_in)
     monkeypatch.setattr(sys, "argv", ["inspection-client", *arguments])
@@ -73,7 +73,7 @@ def test_with_a_login_the_station_and_the_live_view_use_it(monkeypatch):
 
 
 @pytest.mark.parametrize("arguments, keys", [
-    ([], [("API_KEY", CAMERA_KEY_FILE), ("ANTHROPIC_API_KEY", CLAUDE_KEY_FILE)]),
+    ([], [("API_KEY", SERVER_KEY_FILE), ("ANTHROPIC_API_KEY", CLAUDE_KEY_FILE)]),
     (["--login"], [("ANTHROPIC_API_KEY", CLAUDE_KEY_FILE)]),
 ], ids=["with the key", "with a login"])
 def test_each_key_needed_is_read_from_its_own_file(monkeypatch, arguments, keys):

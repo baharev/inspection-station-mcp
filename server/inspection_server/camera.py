@@ -1,7 +1,10 @@
 """The cameras: the real USB webcam, and a fake one that serves stored photos.
 
-Both have two methods that return a Pillow image: take(), a photo, and view(), what the
-camera sees now, for the live view. The server does not care which camera it talks to.
+Both have the same three methods: take(), a photo, and view(), what the camera sees now,
+for the live view, both as a Pillow image; and rate(), how many pictures a second the
+camera sends (None if not known). The server does not care which camera it talks to.
+The real camera also has check(), which the server's start uses to refuse a camera that
+is not there.
 """
 
 import re
@@ -59,8 +62,11 @@ def size_text(size: tuple[int, int]) -> str:
 def camera_sizes(device: str) -> list[tuple[int, int]]:
     """The photo sizes the camera offers, largest first, from MIN_WIDTH pixels across."""
     sizes = _linux_sizes(device) if sys.platform == "linux" else _probed_sizes(device)
-    return sorted({s for s in sizes if s[0] >= MIN_WIDTH}, key=lambda s: (s[0] * s[1], s[0]),
-                  reverse=True)
+    sizes = {s for s in sizes if s[0] >= MIN_WIDTH}
+    if not sizes:
+        raise CameraError(f"The camera {device} offers no photo size of at least {MIN_WIDTH} "
+                          "pixels across.")
+    return sorted(sizes, key=lambda s: (s[0] * s[1], s[0]), reverse=True)
 
 
 def suggested_size(sizes: list[tuple[int, int]]) -> tuple[int, int]:
@@ -177,6 +183,7 @@ class RealCamera:
         self._time = 0.0        # when it arrived
         self._count = 0         # frames read since the camera was opened
         self._error = ""        # why the reader stopped, if it failed
+        self._failed = 0.0      # when
         self._last_use = 0.0
         self._rate = None       # frames a second the camera sends, once measured
 
@@ -242,6 +249,7 @@ class RealCamera:
             with self._lock:
                 self._error = str(err) if isinstance(err, CameraError) else (
                     f"The camera {self.device} failed: {err}")
+                self._failed = time.monotonic()
         finally:
             if camera is not None:
                 camera.release()
@@ -255,10 +263,10 @@ class RealCamera:
 
         start = time.monotonic()
         with self._lock:
-            self._error = ""
             while True:
                 self._last_use = time.monotonic()
-                if self._error:
+                # Reported to every caller that waited when it failed; a later one tries again.
+                if self._error and self._failed >= start:
                     raise CameraError(self._error)
                 if self._frame is not None and ready(self._time, self._count):
                     frame = self._frame

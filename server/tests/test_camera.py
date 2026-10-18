@@ -4,6 +4,7 @@ stand-in that delivers numbered frames, so a test can tell which frame it got.
     pytest -q
 """
 
+import threading
 import time
 from types import SimpleNamespace
 
@@ -116,6 +117,23 @@ def test_a_camera_that_stops_sending_gives_a_readable_error(monkeypatch):
     assert opened[0].released
 
 
+def test_a_camera_failure_reaches_the_caller_waiting_even_if_another_comes_in(monkeypatch):
+    camera = RealCamera("stand-in", (64, 48), idle=0.5)
+    camera.WARM_UP, camera.TIMEOUT = 5, 0.3
+    newcomer = threading.Thread(target=lambda: camera.view())   # the live view, say
+
+    class Failing(StandIn):
+        def release(self):   # the reader has noted the error and not yet finished
+            newcomer.start()
+            newcomer.join()
+            super().release()
+
+    devices = iter([Failing(frames=2), StandIn(period=1)])   # opened again: slow
+    monkeypatch.setattr(RealCamera, "_open", lambda self: next(devices))
+    with pytest.raises(CameraError, match="returned no picture"):   # not "sent no picture"
+        camera.take()
+
+
 def test_a_slow_camera_is_waited_for_as_long_as_frames_keep_coming(monkeypatch):
     camera, _ = stand_in_camera(monkeypatch, period=0.1)
     camera.TIMEOUT = 0.3   # less than the five frames of warm-up take
@@ -158,6 +176,13 @@ def test_the_sizes_are_listed_largest_first_without_the_tiny_ones(monkeypatch):
     assert camera_sizes("any") == [(1920, 1080), (1280, 720), (640, 480)]
 
 
+def test_a_camera_with_only_tiny_sizes_is_refused_with_the_reason(monkeypatch):
+    monkeypatch.setattr("inspection_server.camera.sys.platform", "linux")
+    monkeypatch.setattr(cameras, "_linux_sizes", lambda device: [(320, 240)])
+    with pytest.raises(CameraError, match="offers no photo size of at least 640 pixels across"):
+        camera_sizes("any")
+
+
 def test_on_windows_and_macos_the_sizes_are_found_by_asking_for_common_ones(monkeypatch):
     monkeypatch.setattr("inspection_server.camera.sys.platform", "win32")
     monkeypatch.setattr(RealCamera, "_open", lambda self: StandIn(sizes=C922))
@@ -188,11 +213,13 @@ def test_on_windows_and_macos_the_setting_must_match_exactly_one_camera(monkeypa
 
 @pytest.mark.usefixtures("server_must_not_start")
 def test_the_server_does_not_start_without_its_camera(monkeypatch):
+    monkeypatch.setattr("inspection_server.camera.sys.platform", "linux")
     monkeypatch.setenv("CAMERA", "no-such-camera")
+    monkeypatch.setenv("CAMERA_SIZE", "640x480")   # without it, the start stops sooner
     monkeypatch.setattr("sys.argv", ["inspection-server"])
     with pytest.raises(SystemExit) as stop:
         main()
-    assert "no-such-camera" in str(stop.value.code)
+    assert "No camera at no-such-camera" in str(stop.value.code)
 
 
 def test_the_fake_camera_sees_the_photo_it_serves_next(tmp_path):

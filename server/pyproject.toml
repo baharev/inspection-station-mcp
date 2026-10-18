@@ -9,7 +9,7 @@ description = "An MCP server that lets an AI application take photos with a came
 license = "MIT"
 requires-python = ">=3.13"   # tested with 3.14 on Linux and Windows; the tests pass with 3.13 too
 dependencies = [
-    "mcp[cli]==2.3.0",
+    "mcp==2.3.0",
     "pyjwt[crypto]",
     "uvicorn",
     "opencv-python-headless",

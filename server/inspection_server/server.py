@@ -33,7 +33,8 @@ Environment:
     DATA_DIR     where photos (captures/) and logs (logs/) are kept (default: this repo)
     API_KEY      with --http: the secret key every client must send, at least 32 characters;
                  if not set, the key in ~/.config/inspection-server/api-key, which the
-                 server makes on its first start (copy it to wherever Claude Code runs)
+                 server makes on its first start (copy the file to wherever the client
+                 runs; the claude mcp add line printed at the start reads it from there)
     OAUTH_ISSUER with --http, instead of a key: the login server (OAuth authorization
                  server) whose tokens are accepted, e.g. http://localhost:8080/realms/inspection
     SERVER_URL   with OAUTH_ISSUER: this server's address as clients use it, e.g.
@@ -54,6 +55,7 @@ import ssl
 import sys
 import time
 from datetime import datetime
+from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -66,9 +68,9 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.elicitation import AcceptedElicitation, ElicitationResult
-from mcp.server.mcpserver import Elicit, Image, Resolve
+from mcp.server.mcpserver import Context, Elicit, Image, RequestStateSecurity, Resolve
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from PIL import Image as PILImage
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
@@ -87,7 +89,13 @@ MIN_ZOOM = 0.1            # smallest crop, as a fraction of the photo's width or
 MAX_FINDINGS = 500        # characters
 MIN_KEY_LENGTH = 32       # characters of the secret key
 KEY_FILE = Path.home() / ".config" / "inspection-server" / "api-key"
-LIVE_GAP = 60             # seconds without a frame after which a live viewer is logged again
+LIVE_AUDIT_GAP = 60       # seconds without a frame after which a live viewer is logged again
+# Seconds a login token's times may be off: the login server's clock and this computer's
+# are never quite the same. (The SDK refuses a token after its expiry all the same.)
+CLOCK_LEEWAY = 60
+# Seconds the person has to answer a fail question (the SDK's default is 10 minutes). A
+# long time is safe: the role, the photo and the one-record rule are checked again then.
+ANSWER_TIME = 3600
 
 # Who may call which tool. Logins carry their roles in the token's "roles" claim; the
 # person at this computer (stdio) and the holder of the secret key may call everything.
@@ -101,14 +109,35 @@ ImageId = Annotated[str, Field(
 Fraction = Annotated[float, Field(ge=0.0, le=1.0)]
 
 
+# What capture_image and zoom_image return besides the sentence (for the AI) and the
+# picture: the same facts as fields, so a program never reads them out of the sentence.
+class PhotoInfo(BaseModel):
+    image_id: str = Field(description="The photo's ID, for zoom_image and record_inspection")
+    width: int = Field(description="The photo's width in pixels, as kept (zooms cut from it)")
+    height: int = Field(description="The photo's height in pixels, as kept")
+
+
+class ZoomInfo(PhotoInfo):
+    """The photo the zoom was cut from (a zoom has no ID of its own), and where."""
+    box: tuple[int, int, int, int] = Field(
+        description="The rectangle cut out, in the photo's pixels: left, top, right, bottom")
+    scale: float = Field(description="How much the rectangle was enlarged: 2.0 is twice "
+                                     "its size in the photo, below 1 is shrunk")
+
+
 class Confirmation(BaseModel):
-    record: bool = Field(description="Mark this part as FAILED?")
+    # Left untouched, the box means no: the part is then recorded as unsure.
+    mark_failed: bool = Field(False, title="Mark this part as FAILED",
+                              description="Yes: the part is marked FAILED. No: it is marked "
+                                          "UNSURE, for a person to look at.")
 
 
 # What the person said when asked to confirm a fail: "yes", "no", "declined" (the AI
 # application turned the question down: a Decline button, or automatically where it cannot
-# show questions, as in claude -p), "no answer" (closed without answering).
-FailConfirmation = Literal["not asked", "yes", "no", "declined", "no answer"]
+# show questions, as in claude -p), "no answer" (closed without answering), "cannot ask"
+# (the AI application said it cannot show questions, so nobody was asked).
+FailConfirmation = Literal["not asked", "yes", "no", "declined", "no answer", "cannot ask"]
+CANNOT_ASK = "cannot ask"
 
 
 class InspectionRecord(BaseModel):
@@ -120,8 +149,8 @@ class InspectionRecord(BaseModel):
     ai_verdict: Literal["pass", "fail", "unsure"] = Field(description="What the AI proposed")
     ai_findings: str = Field(description="What the AI saw, in its words")
     fail_confirmation: FailConfirmation = Field(
-        description="'not asked' unless the AI proposed a fail; without a 'yes' the verdict "
-                    "is unsure")
+        description="'not asked' unless the AI proposed a fail; then 'yes', 'no', 'declined', "
+                    "'no answer' or 'cannot ask'; without a 'yes' the verdict is unsure")
     verdict: Literal["pass", "fail", "unsure"] = Field(
         description="What was recorded: the AI's verdict, but a fail only with a person's yes")
     user: str = Field(description="Whose login the AI used: a login's user name, "
@@ -201,6 +230,7 @@ class JwtVerifier:
         try:
             key = await asyncio.to_thread(self.signing_key, token)
             claims = jwt.decode(token, key, algorithms=["RS256"], issuer=self.issuer,
+                                leeway=CLOCK_LEEWAY,
                                 audience=self.audience, options={"require": ["exp", "sub"]})
         except jwt.PyJWTError:
             return None
@@ -244,11 +274,24 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
             raise ToolError(f"There is no photo {image_id}. Take one with capture_image.")
         return path
 
+    damage_reported = False
+
     def already_recorded(image_id: str) -> bool:
+        nonlocal damage_reported
         if not inspection_log.exists():
             return False
-        with open(inspection_log, encoding="utf-8") as f:
-            return any(json.loads(line)["image_id"] == image_id for line in f)
+        ids, unreadable = set(), []
+        with open(inspection_log, encoding="utf-8", errors="replace") as f:
+            for number, line in enumerate(f, 1):
+                try:
+                    ids.add(json.loads(line)["image_id"])
+                except (ValueError, TypeError, KeyError):   # cut short, as by a power cut
+                    unreadable.append(str(number))
+        if unreadable and not damage_reported:   # once per server run, not at every record
+            audit(f"WARNING {inspection_log.name}: line {', '.join(unreadable)} cannot be read, "
+                  "so it is skipped when looking for earlier records")
+            damage_reported = True
+        return image_id in ids
 
     def check_record(image_id: str) -> None:
         photo_path(image_id)
@@ -262,8 +305,16 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         photo.save(buffer, format="JPEG", quality=85)
         return buffer.getvalue()
 
+    def picture_result(text: str, picture: PILImage.Image, info: PhotoInfo) -> CallToolResult:
+        """The sentence and the picture for the AI, and the same facts as fields."""
+        return CallToolResult(
+            content=[TextContent(type="text", text=text),
+                     Image(data=as_jpeg(picture), format="jpeg").to_image_content()],
+            structured_content=info.model_dump(mode="json"))
+
     mcp = MCPServer(
         "inspection-server",
+        version=version("inspection-mcp-server"),
         instructions=(
             "One inspection station: a camera looks down at parts on a light background. "
             "Take a photo with capture_image to answer questions about what is there. "
@@ -273,11 +324,16 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         ),
         auth=auth,
         token_verifier=token_verifier,
+        request_state_security=RequestStateSecurity.ephemeral(ttl=ANSWER_TIME),
     )
 
     @mcp.tool(annotations=ToolAnnotations(destructive_hint=False))
-    async def capture_image() -> list:
-        """Take a photo of the inspection station. Returns the photo and its ID."""
+    async def capture_image() -> Annotated[CallToolResult, PhotoInfo]:
+        """Take a photo of the inspection station. Returns the photo and its ID.
+
+        The photo is sent at most 1280x720 pixels; zoom_image shows parts of it at full
+        detail.
+        """
         require(VIEWER, "capture_image")
         try:
             photo = await asyncio.to_thread(camera.take)
@@ -289,14 +345,18 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         while (captures / f"{image_id}.jpg").exists():
             n += 1
             image_id = f"{stamp}-{n}"
-        (captures / f"{image_id}.jpg").write_bytes(as_jpeg(photo))   # full size, for zooms
-        size = f"{photo.width}x{photo.height}"
+        saved = as_jpeg(photo)
+        (captures / f"{image_id}.jpg").write_bytes(saved)   # full size, for zooms
+        width, height = photo.size
+        size = f"{width}x{height}"
         photo.thumbnail(MAX_PHOTO)  # size cap; keeps the aspect ratio
         sent = f"{photo.width}x{photo.height}"
-        audit(f"capture_image {image_id} {size}")
-        return [f"Photo {image_id} ({size} pixels" + (f", shown here at {sent}; zoom_image "
-                f"shows parts of it at full detail)" if sent != size else ")"),
-                Image(data=as_jpeg(photo), format="jpeg")]
+        # The fingerprint, as the record will hold it, so the two can be compared.
+        audit(f"capture_image {image_id} {size} sha256={hashlib.sha256(saved).hexdigest()}")
+        return picture_result(
+            f"Photo {image_id} ({size} pixels" + (f", shown here at {sent}; zoom_image "
+            f"shows parts of it at full detail)" if sent != size else ")"),
+            photo, PhotoInfo(image_id=image_id, width=width, height=height))
 
     @mcp.tool(annotations=ToolAnnotations(read_only_hint=True))
     async def zoom_image(
@@ -305,12 +365,14 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         top: Annotated[Fraction, Field(description="Top edge, 0 = top of the photo")],
         width: Annotated[Fraction, Field(description="Width, as a fraction of the photo's width")],
         height: Annotated[Fraction, Field(description="Height, as a fraction of the photo's height")],
-    ) -> list:
+    ) -> Annotated[CallToolResult, ZoomInfo]:
         """Look closer: crop a rectangle of an earlier photo and return it enlarged.
 
         All four numbers are fractions of the photo, from 0 to 1. Example: the top-right
         quarter is left=0.5, top=0, width=0.5, height=0.5. Enlarging shows what the
         camera captured more clearly; it cannot add detail the camera did not capture.
+        The result says how much the rectangle was enlarged (scale): a smaller rectangle
+        shows more detail.
         """
         require(VIEWER, "zoom_image")
         if width < MIN_ZOOM or height < MIN_ZOOM:
@@ -326,13 +388,18 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
             box = (round(left * w), round(top * h), round((left + width) * w),
                    round((top + height) * h))
             crop = photo.crop(box)
-        scale = ZOOM_SIZE / max(crop.size)
+        # ZOOM_SIZE across, but a large rectangle never with less detail than the photo sent.
+        scale = max(ZOOM_SIZE / max(crop.size), min(MAX_PHOTO[0] / w, MAX_PHOTO[1] / h, 1))
         crop = crop.resize((round(crop.width * scale), round(crop.height * scale)),
                            PILImage.Resampling.LANCZOS)
         audit(f"zoom_image {image_id} box={box}")
-        return [f"Photo {image_id}, pixels {box[0]}..{box[2]} across and {box[1]}..{box[3]} "
-                f"down, enlarged {scale:.1f} times",
-                Image(data=as_jpeg(crop), format="jpeg")]
+        how = (f"enlarged {scale:.1f} times" if scale >= 1.05 else
+               "at about full size" if scale > 0.95 else
+               f"shown at {scale:.0%} of full size: a smaller rectangle shows more detail")
+        return picture_result(
+            f"Photo {image_id}, pixels {box[0]}..{box[2]} across and {box[1]}..{box[3]} "
+            f"down, {how}",
+            crop, ZoomInfo(image_id=image_id, width=w, height=h, box=box, scale=round(scale, 2)))
 
     # The live view: a page (no secrets in it) that keeps asking for the latest frame.
     # With --http only; the tools above are the only way in over stdio.
@@ -357,7 +424,7 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
             return PlainTextResponse(f"{name} may not use the live view: "
                                      f"it needs the role '{VIEWER}'.", 403)
         last = watching.get(name)
-        if last is None or time.monotonic() - last >= LIVE_GAP:
+        if last is None or time.monotonic() - last >= LIVE_AUDIT_GAP:
             audit("live view opened")
         watching[name] = time.monotonic()
         try:
@@ -369,12 +436,24 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
             headers["X-Camera-Rate"] = f"{rate:.1f}"
         return Response(data, media_type="image/jpeg", headers=headers)
 
-    def confirm_fail(image_id: str, part_id: str, verdict: str, findings: str):
-        # Runs before the tool body. Only a fail asks the human, and only for a valid record.
+    def can_ask(ctx: Context) -> bool:
+        """True if the AI application can show the person a question (form elicitation)."""
+        capabilities = ctx.client_capabilities
+        asks = capabilities.elicitation if capabilities else None
+        # A bare elicitation capability, from before there were kinds of questions, means forms.
+        return asks is not None and (asks.form is not None or asks.url is None)
+
+    def confirm_fail(image_id: str, part_id: str, verdict: str, findings: str, ctx: Context):
+        # Runs before the tool body: once when the question is asked, and again when the
+        # answer comes back. Only a fail asks the human, and only for a valid record.
         if verdict != "fail":
             return None
         require(INSPECTOR, "record_inspection")
         check_record(image_id)
+        if not can_ask(ctx):
+            return CANNOT_ASK
+        if not ctx.input_responses:   # the round that asks, not the one with the answer
+            audit(f"record_inspection {part_id} {image_id}: fail proposed, asking the person")
         return Elicit(f"The AI found a problem with part {part_id} (photo {image_id}): "
                       f"{findings}\n\nIf you agree, the part is marked FAILED; in a real "
                       f"plant it would be taken off the line. If not, it is marked UNSURE and "
@@ -400,10 +479,12 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         check_record(image_id)
         confirmation, recorded = "not asked", verdict
         if verdict == "fail":
-            if isinstance(answer, AcceptedElicitation):
-                confirmation = "yes" if answer.data.record else "no"
-            else:
+            if not isinstance(answer, AcceptedElicitation):
                 confirmation = "declined" if answer.action == "decline" else "no answer"
+            elif answer.data == CANNOT_ASK:
+                confirmation = CANNOT_ASK
+            else:
+                confirmation = "yes" if answer.data.mark_failed else "no"
             if confirmation != "yes":
                 recorded = "unsure"
         record = InspectionRecord(
@@ -412,7 +493,10 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
             part_id=part_id, ai_verdict=verdict, ai_findings=findings,
             fail_confirmation=confirmation, verdict=recorded, user=caller()[0],
         )
+        written = inspection_log.read_bytes() if inspection_log.exists() else b""
         with open(inspection_log, "a", encoding="utf-8") as f:
+            if written and not written.endswith(b"\n"):   # a last line cut short: end it
+                f.write("\n")
             f.write(record.model_dump_json(exclude={"note"}) + "\n")
         audit(f"record_inspection {part_id} {recorded} {image_id} "
               f"(AI: {verdict}, fail confirmation: {confirmation})")
@@ -444,8 +528,9 @@ def key_auth(key: str) -> dict:
 def secret_key(path: Path = KEY_FILE) -> str:
     """The secret key: API_KEY if set, else the key in the key file, made there if missing.
 
-    With the key in a file, the server and Claude Code read the same key, also on two
-    computers (copy the file), and nobody has to type it.
+    With the key in a file, nobody has to type it: the claude mcp add line printed at the
+    start reads it from the file (on another computer, a copy of the file), and Claude Code
+    keeps the key it read, so after a new key that line must be run again.
     """
     if key := os.environ.get("API_KEY", "").strip():
         where = "API_KEY"
@@ -483,14 +568,13 @@ def oauth_auth(issuer: str, server_url: str, signing_key=None) -> dict:
     signing_key(token) returns the public key to check a token with; by default the
     login server's published keys are used.
     """
-    issuer = issuer.rstrip("/")
     if not secure_or_local(issuer):
         sys.exit(f"The login server {issuer} must be reached over HTTPS (https://), or run "
                  "on this computer (localhost): over plain HTTP, anyone on the network could "
                  "replace its keys and log in as anyone.")
     if signing_key is None:
         # The login server publishes where its public keys are (OpenID Connect discovery).
-        settings = f"{issuer}/.well-known/openid-configuration"
+        settings = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
         try:
             with urlopen(settings, timeout=10) as response:
                 published = json.load(response)
@@ -500,13 +584,14 @@ def oauth_auth(issuer: str, server_url: str, signing_key=None) -> dict:
                     if isinstance(getattr(err, "reason", err), ssl.SSLCertVerificationError)
                     else "Is the login server running, and is OAUTH_ISSUER right?")
             sys.exit(f"Cannot read the login server's settings at {settings} ({err}). {hint}")
-        if named.rstrip("/") != issuer:
+        if named.rstrip("/") != issuer.rstrip("/"):   # a slash more or less is the same server
             sys.exit(f"The login server at {issuer} calls itself {named}: set OAUTH_ISSUER "
                      "to the address it names.")
         if not secure_or_local(keys):
             sys.exit(f"The login server publishes its keys at {keys}, over plain HTTP from "
                      "another computer: anyone on the network could replace them.")
         signing_key = jwt.PyJWKClient(keys).get_signing_key_from_jwt
+        issuer = named   # its tokens name it exactly so, with or without a slash at the end
     # resource_server_url publishes, for clients such as Claude Code, which login server
     # to use. The verifier checks that a token was issued for this server (its audience).
     return {"auth": AuthSettings(issuer_url=issuer, resource_server_url=server_url,

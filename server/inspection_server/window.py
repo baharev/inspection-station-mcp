@@ -24,9 +24,8 @@ from pathlib import Path
 try:
     import tkinter as tk
     from tkinter import messagebox, ttk
-except ImportError:   # Linux distributions ship it separately
-    sys.exit("This Python has no Tkinter, which the window needs. On Ubuntu and Debian: "
-             "sudo apt install python3-tk")
+except ImportError:   # Linux distributions ship it separately; main() says so
+    tk = None
 
 from inspection_server import choice as camera_choice
 from inspection_server.camera import CameraError, camera_sizes, size_text, suggested_size
@@ -49,10 +48,11 @@ def server_command(other_computers: bool) -> list[str]:
 
 
 def server_environment() -> dict:
-    """The server's settings: this window's, except a CAMERA left over from a terminal,
-    which would come before the camera chosen in the window."""
+    """The server's settings: this window's, except a CAMERA or CAMERA_SIZE left over from
+    a terminal, which would come before the camera and size chosen in the window."""
     environment = dict(os.environ, PYTHONIOENCODING="utf-8")
     environment.pop("CAMERA", None)
+    environment.pop("CAMERA_SIZE", None)
     return environment
 
 
@@ -134,9 +134,10 @@ def make_shortcut() -> Path:
 
 
 class Window:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: "tk.Tk"):
         self.root = root
         self.process = None        # the server, while it runs
+        self.port_taken = False    # it said its port is taken
         self.lines = queue.Queue()  # what it says, from the thread that reads it
         self.entries = []          # the camera list, as (setting, name)
         self.sizes = None          # the chosen camera's photo sizes, once listed
@@ -248,7 +249,7 @@ class Window:
         """Lists the chosen camera's photo sizes, once; False if they cannot be read."""
         if self.sizes is not None:
             return True
-        device, name = self.entries[self.camera.current()]
+        device = self.entries[self.camera.current()][0]
         if device == camera_choice.FAKE:
             return False
         self.root.config(cursor="watch")
@@ -260,10 +261,6 @@ class Window:
             return False
         finally:
             self.root.config(cursor="")
-        if not sizes:
-            self.note["text"] = (f"The camera {name} offers no photo size of at least "
-                                 "640 pixels across.")
-            return False
         self.sizes = sizes
         suggested = suggested_size(sizes)
         shown = self.size.get()
@@ -392,6 +389,9 @@ def show_error(kind, error, trace) -> None:
 
 
 def main() -> None:
+    if tk is None:
+        sys.exit("This Python has no Tkinter, which the window needs. On Ubuntu and Debian: "
+                 "sudo apt install python3-tk")
     if sys.platform == "win32":   # sharp text on screens scaled above 100 %
         try:
             import ctypes

@@ -103,15 +103,12 @@ def ask(entries: list[tuple[str, str]], read=input, say=print) -> tuple[str, str
         say(f"Please type a number from 1 to {len(entries)}.")
 
 
-def sizes_of(device: str, name: str) -> list[tuple[int, int]]:
-    """The sizes the camera offers; stops the start if it cannot tell."""
+def sizes_of(device: str) -> list[tuple[int, int]]:
+    """The sizes the camera offers; stops the start if it cannot tell or offers none."""
     try:
-        sizes = camera_sizes(device)
+        return camera_sizes(device)
     except CameraError as err:
         sys.exit(str(err))
-    if not sizes:
-        sys.exit(f"The camera {name} offers no photo size of at least 640 pixels across.")
-    return sizes
 
 
 def ask_size(sizes: list[tuple[int, int]], read=input, say=print) -> tuple[int, int]:
@@ -159,7 +156,7 @@ def for_start(choose: bool, can_ask: bool, path: Path | None = None,
         if device == FAKE:
             return Choice(device, SAMPLE_PHOTOS, FROM_CAMERA)
         if not size:
-            sizes = ", ".join(size_text(s) for s in sizes_of(device, device))
+            sizes = ", ".join(size_text(s) for s in sizes_of(device))
             sys.exit(f"CAMERA is set, so set CAMERA_SIZE too: the size of the photos, one of "
                      f"those this camera offers: {sizes}.")
         return Choice(device, device, FROM_CAMERA, size)
@@ -178,9 +175,13 @@ def for_start(choose: bool, can_ask: bool, path: Path | None = None,
     else:
         device, name = ask(menu_entries(), read, say)
         choice = Choice(device, name, f"chosen now; to choose another: {CHOOSE}")
-    if choice.device != FAKE:
+    if choice.device != FAKE and not size:
         say("Asking the camera which photo sizes it offers; this can take a few seconds.")
-        choice.size = ask_size(sizes_of(choice.device, choice.name), read, say)
-    save(choice, path)
-    say(f"Saved in {path}: from now on the server starts with this choice without asking.")
+        choice.size = ask_size(sizes_of(choice.device), read, say)
+    save(choice, path)   # CAMERA_SIZE is not saved: like CAMERA, it counts while it is set
+    if choice.size or choice.device == FAKE:
+        say(f"Saved in {path}: from now on the server starts with this choice without asking.")
+    else:
+        say(f"Saved in {path}, without a photo size: CAMERA_SIZE gives it while it is set.")
+        choice.size = size
     return choice

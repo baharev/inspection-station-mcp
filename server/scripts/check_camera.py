@@ -27,7 +27,7 @@ def sizes(device: str) -> str:
         offered = camera_sizes(device)
     except CameraError as err:
         return str(err)
-    suggested = suggested_size(offered) if offered else None
+    suggested = suggested_size(offered)
     return ", ".join(size_text(s) + (" (suggested)" if s == suggested else "") for s in offered)
 
 
@@ -50,8 +50,8 @@ if len(sys.argv) == 3:
 else:
     try:
         size = suggested_size(camera_sizes(device))
-    except (CameraError, ValueError) as err:
-        sys.exit(str(err) or "The camera offers no photo size of at least 640 pixels across.")
+    except CameraError as err:
+        sys.exit(str(err))
 try:
     photo = RealCamera(device, size).take()
 except CameraError as err:

@@ -113,7 +113,7 @@ In `inspection_server/server.py` unless named otherwise.
 7. `if width < MIN_ZOOM or height < MIN_ZOOM:` → `if width <= MIN_ZOOM or height <= MIN_ZOOM:`
 8. `if left + width > 1 or top + height > 1:` → `if left + width > 1:`
 9. In `zoom_image`, before `w, h = photo.size`: `photo.thumbnail(MAX_PHOTO)`
-10. `json.loads(line)["image_id"] == image_id` → `json.loads(line)["part_id"] == image_id`
+10. `ids.add(json.loads(line)["image_id"])` → `ids.add(json.loads(line)["part_id"])`
 11. The `pattern=` of `ImageId` → commented out
 12. `hashlib.sha256(photo_path(image_id).read_bytes())` → `hashlib.sha256(bytes(photo_path(image_id)))`
 13. `user=caller()[0],` → `user="local",`

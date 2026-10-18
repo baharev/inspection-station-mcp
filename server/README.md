@@ -7,7 +7,7 @@ server, not in the prompt. A page in the browser shows what the camera sees, liv
 A self-built demonstration of connecting a device to AI models through the
 [Model Context Protocol](https://modelcontextprotocol.io) (MCP), the standard way to
 plug tools, data and devices into AI applications such as Claude Code. It is small on
-purpose: about 1,550 lines of Python and 140 tests. It runs on one computer, or over the
+purpose: about 1,600 lines of Python and 162 tests. It runs on one computer, or over the
 network with a secret key or with logins and roles.
 
 This repository holds the server, a demo login server and a script for HTTPS
@@ -53,6 +53,10 @@ ask "Take a photo. Is the tool tray complete?" The desktop app, in the repositor
 The connection needs nothing else: at its first start, the server makes a secret key and
 keeps it in a file, `~/.config/inspection-server/api-key`. The command above reads the
 key from there, and so does the desktop app, so you never type it.
+
+Without any Claude access, `python scripts/try_tools.py` (after the `pip install` line)
+shows what the tools do: it plays the AI's part with fixed calls, a photo, a zoom and a
+proposed fail, and asks you in the terminal to confirm the fail.
 
 On a computer without a screen, `inspection-server --http` starts the server in the
 terminal instead, and shows the same. Other ways in, explained further down: Claude Code
@@ -133,17 +137,23 @@ told or tries:
   so before a fail is recorded the server asks the person at the keyboard, through the
   part of MCP that lets a server ask the user a question ("elicitation"). If they agree,
   the part is recorded as failed. If they say no, decline the question or close it, the
-  part is recorded as unsure, to be put aside for a person to look at, so no part
-  checked is ever missing from the log. Each record says what happened to the question:
-  `fail_confirmation` is `not asked` (the AI did not propose a fail), `yes`, `no`,
-  `declined` (turned down: a person chose "Decline", or the AI application cannot show
-  questions, as in non-interactive use with `claude -p`) or `no answer` (closed without
-  answering). The question is asked only for a record that would otherwise be accepted.
+  part is recorded as unsure, to be put aside for a person to look at. Each record says
+  what happened to the question: `fail_confirmation` is `not asked` (the AI did not
+  propose a fail), `yes`, `no`, `declined` (turned down: a person chose "Decline", or the
+  AI application turned it down by itself, as in non-interactive use with `claude -p`),
+  `no answer` (closed without answering) or `cannot ask` (the AI application says it
+  cannot show questions, so nobody was asked). The question is asked only for a record
+  that would otherwise be accepted, and the person has an hour to answer it. Every fail
+  the AI proposes is in the audit log from the moment the person is asked; a record
+  follows unless the answer never comes, comes after more than an hour, or comes after
+  the server was restarted (then the answer is refused, nothing is recorded, and the AI
+  has to propose the fail again).
 - **One record per photo**, so the log never holds two verdicts for the same picture.
 - **Everything is audit-logged** in `logs/audit.log`, one line per event, with the time
-  (and its offset from UTC) and who called: photos, zooms, records, refusals, the answer
-  to each fail question, each visit to the live view, and every request turned away for
-  want of a valid key or login (as `unknown`, with the address it came from).
+  (and its offset from UTC) and who called: photos (with their fingerprint), zooms,
+  records, refusals, each fail question when it is asked and its answer, each visit to
+  the live view, and every request turned away for want of a valid key or login (as
+  `unknown`, with the address it came from).
 - **Records go to `logs/inspections.jsonl`**, one JSON object per line. Each keeps what
   the AI proposed (`ai_verdict`, `ai_findings`) apart from what was recorded (`verdict`:
   a fail only with a person's yes), names whose login the AI used (`user`), and holds the
@@ -829,10 +839,13 @@ checked the same way.
   the key and with logins, and the live view; `tests/test_camera.py`: the cameras, the
   real one against a stand-in device; `tests/test_choice.py`: choosing the camera and
   its photo size, and
-  what the server shows at its start; `tests/test_window.py`: the server window
+  what the server shows at its start; `tests/test_window.py`: the server window;
+  `tests/test_try_tools.py`: the script that tries the tools
 - `samples/`: the photos the fake camera serves
 - `scripts/check_camera.py`: lists the cameras with their values for `CAMERA` and their
   photo sizes, and takes one test photo
+- `scripts/try_tools.py`: tries the tools without an AI, with the fake camera, and asks
+  you to confirm the fail it proposes
 - `scripts/keycloak.sh` and `keycloak/inspection-realm.json`: the demo login server, its
   users and roles
 - `scripts/make_certs.sh`: certificates for HTTPS between two computers

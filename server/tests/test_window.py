@@ -1,8 +1,12 @@
 """Tests for the window that starts the server. The ones that open a window are skipped
-on a computer without a screen.
+on a computer without a screen or without Tkinter.
 
     pytest -q
 """
+
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -19,10 +23,12 @@ def test_start_runs_the_server_over_http_for_this_computer_or_for_others_too():
 
 def test_a_camera_set_in_a_terminal_does_not_override_the_one_chosen_in_the_window(monkeypatch):
     monkeypatch.setenv("CAMERA", "fake")
+    monkeypatch.setenv("CAMERA_SIZE", "640x480")
     assert "CAMERA" not in window.server_environment()
+    assert "CAMERA_SIZE" not in window.server_environment()
 
 
-def test_the_window_and_the_terminal_keep_each_others_settings(tmp_path):
+def test_the_window_and_the_terminal_keep_each_others_settings():
     choice.write_settings({window.OTHER_COMPUTERS: True})
     choice.save(choice.Choice(*C270, "", (1280, 720)))
     choice.write_settings({window.OTHER_COMPUTERS: False})
@@ -38,6 +44,18 @@ def test_the_key_copied_is_the_one_the_server_takes(tmp_path, monkeypatch):
     assert window.secret_key() == "k" * 43
     monkeypatch.setenv("API_KEY", "a" * 40)
     assert window.secret_key() == "a" * 40
+
+
+def test_without_tkinter_the_window_says_how_to_get_it():
+    # Some Linux distributions ship Tkinter separately. The window's module still loads
+    # without it, so the tests above run there too.
+    started = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.modules['tkinter'] = None; "
+         "from inspection_server import window; print('loaded'); window.main()"],
+        capture_output=True, text=True, cwd=Path(__file__).resolve().parent.parent)
+    assert (started.stdout, started.returncode, started.stderr.strip()) == ("loaded\n", 1, (
+        "This Python has no Tkinter, which the window needs. On Ubuntu and Debian: "
+        "sudo apt install python3-tk"))
 
 
 def test_the_linux_launcher_quotes_paths_with_spaces():

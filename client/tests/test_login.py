@@ -2,9 +2,10 @@
 
 The login server and the browser are played by the test; the rest of the login (finding
 the login server, the token, renewing it) is the MCP SDK's, tested there, and was tried
-by hand with the demo login server of the camera server's repository.
+by hand with the demo login server of the inspection server's repository.
 """
 
+import socket
 import time
 from urllib.parse import parse_qs, urlsplit
 
@@ -12,8 +13,8 @@ import httpx2
 import pytest
 
 from inspection_client import login as login_module
-from inspection_client.login import CALLBACK, RENEW_EARLY, BrowserLogin, LoginFailed
-from inspection_client.station import CameraServerRefused, camera_http, describe
+from inspection_client.login import RENEW_EARLY, BrowserLogin, LoginFailed
+from inspection_client.station import ServerRefused, server_http, describe
 
 pytestmark = pytest.mark.anyio
 
@@ -21,22 +22,28 @@ LOGIN_PAGE = ("http://login.example/auth?response_type=code&client_id=inspection
               "&state=s1&scope=openid+offline_access&prompt=consent")
 
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
+@pytest.fixture(autouse=True)
+def free_port(monkeypatch):
+    """The browser comes back to a free port, so the tests run while the app is logging in
+    on this computer too (on its own port)."""
+    with socket.socket() as probe:
+        probe.bind(("localhost", 0))
+        port = probe.getsockname()[1]
+    monkeypatch.setattr(login_module, "CALLBACK_PORT", port)
+    monkeypatch.setattr(login_module, "CALLBACK", f"http://localhost:{port}/callback")
 
 
 def browser(comes_back_with: str, opened: list):
     """Opens the login page, and returns to the app with the login server's answer."""
     def open_page(url):
         opened.append(url)
-        httpx2.get(f"{CALLBACK}?{comes_back_with}")
+        httpx2.get(f"{login_module.CALLBACK}?{comes_back_with}")
     return open_page
 
 
 def login_with(answer: str, opened: list, told: list) -> BrowserLogin:
     login = BrowserLogin("http://station:8000/mcp", told.append, browser(answer, opened))
-    login.auth.context.auth_server_url = "http://login.example/"   # as the camera server names it
+    login.auth.context.auth_server_url = "http://login.example/"   # as the server names it
     return login
 
 
@@ -58,9 +65,9 @@ async def test_only_the_callback_address_brings_the_answer():
     elsewhere = []
 
     def open_page(url):   # another page on the same port first, then the real answer
-        app = CALLBACK.removesuffix("/callback")
+        app = login_module.CALLBACK.removesuffix("/callback")
         elsewhere.append(httpx2.get(f"{app}/elsewhere?code=forged&state=s1").status_code)
-        httpx2.get(f"{CALLBACK}?code=c1&state=s1")
+        httpx2.get(f"{login_module.CALLBACK}?code=c1&state=s1")
 
     login = BrowserLogin("http://station:8000/mcp", print, open_page)
     login.auth.context.auth_server_url = "http://login.example/"
@@ -79,7 +86,7 @@ async def test_a_refused_login_is_told_in_words():
     assert not login.logged_in
 
 
-async def test_no_login_page_when_the_camera_server_names_no_login_server():
+async def test_no_login_page_when_the_inspection_server_names_no_login_server():
     opened = []
     login = BrowserLogin("http://station:8000/mcp", print, browser("code=c1", opened))
     with pytest.raises(LoginFailed, match="without --login"):
@@ -87,7 +94,7 @@ async def test_no_login_page_when_the_camera_server_names_no_login_server():
     assert opened == []
 
 
-async def test_the_address_must_be_the_one_the_camera_server_publishes():
+async def test_the_address_must_be_the_one_the_inspection_server_publishes():
     login = BrowserLogin("http://127.0.0.1:8000/mcp")
     await login.same_address("http://127.0.0.1:8000/mcp", "http://127.0.0.1:8000/mcp")
     with pytest.raises(LoginFailed, match="--server http://localhost:8000/mcp"):
@@ -95,7 +102,7 @@ async def test_the_address_must_be_the_one_the_camera_server_publishes():
 
 
 def servers(request: httpx2.Request, accepts_token=True) -> httpx2.Response:
-    """The camera server, which wants a login, and its login server."""
+    """The inspection server, which wants a login, and its login server."""
     match request.url.path:
         case "/mcp" if accepts_token and "Authorization" in request.headers:
             return httpx2.Response(200)
@@ -130,7 +137,7 @@ async def test_a_login_left_unfinished_stops_without_a_traceback(monkeypatch, ca
     assert caplog.records == []   # the window says it; nothing more in the terminal
 
 
-async def test_no_login_to_a_camera_server_known_by_another_address(monkeypatch):
+async def test_no_login_to_an_inspection_server_known_by_another_address(monkeypatch):
     monkeypatch.setattr(login_module, "WAIT", 0.2)   # never wait for a login that may start
     opened = []
     login = BrowserLogin("http://127.0.0.1:8000/mcp", print, opened.append)
@@ -138,7 +145,7 @@ async def test_no_login_to_a_camera_server_known_by_another_address(monkeypatch)
                                   transport=httpx2.MockTransport(servers)) as http:
         with pytest.raises(Exception) as failed:
             await http.post("http://127.0.0.1:8000/mcp")
-    assert ("the camera server's address is http://station:8000/mcp, not "
+    assert ("the inspection server's address is http://station:8000/mcp, not "
             "http://127.0.0.1:8000/mcp: start the app with --server http://station:8000/mcp"
             in describe(failed.value))
     assert opened == []
@@ -147,10 +154,10 @@ async def test_no_login_to_a_camera_server_known_by_another_address(monkeypatch)
 def logs_in(url):
     """The person logs in on the login page."""
     state = parse_qs(urlsplit(url).query)["state"][0]
-    httpx2.get(f"{CALLBACK}?code=c1&state={state}&iss=http%3A%2F%2Flogin.example%2F")
+    httpx2.get(f"{login_module.CALLBACK}?code=c1&state={state}&iss=http%3A%2F%2Flogin.example%2F")
 
 
-async def test_the_token_is_renewed_before_the_camera_server_would_refuse_it():
+async def test_the_token_is_renewed_before_the_inspection_server_would_refuse_it():
     login = BrowserLogin("http://station:8000/mcp", print, logs_in)
     async with httpx2.AsyncClient(auth=login.auth,
                                   transport=httpx2.MockTransport(servers)) as http:
@@ -161,23 +168,23 @@ async def test_the_token_is_renewed_before_the_camera_server_would_refuse_it():
     assert early < RENEW_EARLY + 5
 
 
-async def test_the_camera_servers_first_refusal_starts_the_login(offline):
+async def test_the_inspection_servers_first_refusal_starts_the_login(offline):
     offline(servers)
     login = BrowserLogin("http://station:8000/mcp", print, logs_in)
     try:
-        async with camera_http(login.auth) as http:
+        async with server_http(login.auth) as http:
             assert (await http.post("http://station:8000/mcp")).status_code == 200
-    except CameraServerRefused as refused:
+    except ServerRefused as refused:
         pytest.fail(f"No login: the person was told: {describe(refused)}")
     assert login.logged_in
 
 
-async def test_a_login_the_camera_server_refuses_is_told_in_words(offline):
+async def test_a_login_the_inspection_server_refuses_is_told_in_words(offline):
     offline(lambda request: servers(request, accepts_token=False))
     login = BrowserLogin("http://station:8000/mcp", print, logs_in)
-    with pytest.raises(CameraServerRefused) as refused:
-        async with camera_http(login.auth) as http:
+    with pytest.raises(ServerRefused) as refused:
+        async with server_http(login.auth) as http:
             await http.post("http://station:8000/mcp")
-    assert login.logged_in, "The camera server's refusal was final before the person logged in."
+    assert login.logged_in, "The inspection server's refusal was final before the person logged in."
     told = describe(refused.value)
     assert "refused the login" in told and "SERVER_URL" in told, f"The person was told: {told}"

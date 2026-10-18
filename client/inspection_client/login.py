@@ -1,12 +1,12 @@
-"""Logging in to the camera server, in the browser, instead of sending its key.
+"""Logging in to the inspection server, in the browser, instead of sending its key.
 
-The camera server names its login server (an OAuth authorization server). The MCP SDK's
+The inspection server names its login server (an OAuth authorization server). The MCP SDK's
 OAuthClientProvider finds it, sends the person to its login page, exchanges the answer
 for a token, sends the token with every request, and renews it before it runs out. This
 module adds what the SDK leaves to the application: opening the browser, receiving the
 login server's answer on this computer, and keeping the token. The app is registered at
 the login server in advance, as the client "inspection-client" (the demo login server in
-the camera server's repository has it), the way an administrator registers each
+the inspection server's repository has it), the way an administrator registers each
 application that may connect; nothing is registered automatically.
 
 The token is kept in memory only: every start of the app logs in again.
@@ -45,9 +45,9 @@ logging.getLogger("mcp.client.auth.oauth2").addFilter(
 
 
 class BrowserLogin(TokenStorage):
-    """Logs in through the browser when the camera server asks for a login.
+    """Logs in through the browser when the inspection server asks for a login.
 
-    auth is what the connections to the camera server send their requests through.
+    auth is what the connections to the inspection server send their requests through.
     tell(text) reports to the window: that the browser waits, and who logged in.
     """
 
@@ -71,7 +71,7 @@ class BrowserLogin(TokenStorage):
         return self.tokens is not None
 
     def who(self) -> str:
-        """The user name in the token (read, not checked: the camera server checks it)."""
+        """The user name in the token (read, not checked: the inspection server checks it)."""
         try:
             payload = self.tokens.access_token.split(".")[1]
             claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
@@ -88,7 +88,7 @@ class BrowserLogin(TokenStorage):
         self.tokens = tokens
         if tokens.expires_in:
             # The SDK counts a token's lifetime from when it arrives, the login server from
-            # when it issued it: just before the SDK renews it, the camera server would
+            # when it issued it: just before the SDK renews it, the inspection server would
             # already refuse it, and the SDK answers a refusal with a new login. So: early.
             self.auth.context.token_expiry_time = time.time() + tokens.expires_in - RENEW_EARLY
         if self.answer is not None:   # a login, not a renewal
@@ -104,18 +104,18 @@ class BrowserLogin(TokenStorage):
     # --- the login in the browser ---------------------------------------------------
 
     async def same_address(self, server_url: str, published: str | None) -> None:
-        """The camera server's address as it publishes it must be the one the app uses:
+        """The inspection server's address as it publishes it must be the one the app uses:
         its tokens are issued for that address only."""
         if published and published.rstrip("/") != server_url.rstrip("/"):
-            raise LoginFailed(f"the camera server's address is {published}, not {server_url}: "
+            raise LoginFailed(f"the inspection server's address is {published}, not {server_url}: "
                               f"start the app with --server {published}")
 
     async def open_login_page(self, url: str) -> None:
         if self.auth.context.auth_server_url is None:
-            # Without a login server named, the SDK would guess one on the camera server.
-            raise LoginFailed("the camera server names no login server; it probably uses "
+            # Without a login server named, the SDK would guess one on the inspection server.
+            raise LoginFailed("the inspection server names no login server; it probably uses "
                               "its key: start the app without --login.")
-        # The camera server needs no scopes (it reads roles from the token), and names
+        # The inspection server needs no scopes (it reads roles from the token), and names
         # none; the SDK then asks for every scope the login server offers, which it refuses
         # for an app not given them. So: no scopes. And the login form every time, so each
         # start of the app is a choice of user, not the browser's last one.

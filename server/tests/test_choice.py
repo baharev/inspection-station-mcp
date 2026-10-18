@@ -22,7 +22,13 @@ SIZES = [(1920, 1080), (1280, 720), (640, 480)]
 def answers(*typed):
     """Stands in for the keyboard: the lines typed, one per question."""
     lines = iter(typed)
-    return lambda prompt: next(lines)
+
+    def read(prompt):
+        try:
+            return next(lines)
+        except StopIteration:
+            pytest.fail(f"Asked once more than the test answers: {prompt!r}")
+    return read
 
 
 def nobody(prompt):
@@ -64,7 +70,7 @@ def test_the_size_menu_suggests_one_that_enter_takes(cameras):
     assert "Please type a number from 1 to 3, or just press Enter." in shown
 
 
-def test_the_sample_photos_need_no_size(cameras, tmp_path):
+def test_the_sample_photos_need_no_size(cameras):
     picked = choice.for_start(False, True, read=answers("3"), say=lambda text: None)
     assert picked.device == choice.FAKE and picked.size is None
     assert choice.for_start(False, False, read=nobody).device == choice.FAKE
@@ -137,6 +143,15 @@ def test_the_setting_camera_size_comes_before_the_saved_size(cameras, monkeypatc
     assert choice.saved().size == (1920, 1080)   # the saved choice is kept
     with pytest.raises(SystemExit, match="Remove-Item Env:CAMERA_SIZE"):
         choice.for_start(True, True, read=nobody)
+
+
+def test_with_camera_size_set_the_first_start_asks_only_the_camera(cameras, monkeypatch):
+    monkeypatch.setenv("CAMERA_SIZE", "640x480")
+    shown = []
+    picked = choice.for_start(False, True, read=answers("1"), say=shown.append)
+    assert (picked.device, picked.size) == (C270[0], (640, 480))
+    assert not any("photo sizes" in line for line in shown)   # the size was not asked
+    assert choice.saved().size is None   # not saved: it counts while it is set
 
 
 def test_on_windows_a_camera_is_saved_by_name_unless_two_share_it(cameras, monkeypatch):

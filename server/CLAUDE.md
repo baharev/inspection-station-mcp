@@ -46,7 +46,9 @@ own, `inspection-mcp-client`, and never imports this code.
 - Over HTTP, every request needs the secret key or a login token (the SDK's
   `TokenVerifier`); roles come from the token's `roles` claim and are checked in each
   tool. The key is in `~/.config/inspection-server/api-key` (made by the server at its
-  first start; Claude Code reads the same file) unless `API_KEY` is set. Claude Code sends login details only over HTTPS or to `localhost`.
+  first start) unless `API_KEY` is set. The `claude mcp add` line the server prints reads
+  the file once and Claude Code keeps its own copy: after a new key, run the line again.
+  Claude Code sends login details only over HTTPS or to `localhost`.
 - Every rule lives in the server: inputs validated, limits in code, a human confirms
   anything with consequences, everything audit-logged. Tool annotations are hints for the
   host, not protection.
