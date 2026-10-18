@@ -7,8 +7,10 @@ contain nothing private and the zoom can be checked by color.
 """
 
 import base64
+import hashlib
 import io
 import json
+from datetime import datetime
 
 import pytest
 from mcp import Client
@@ -192,10 +194,31 @@ async def test_pass_is_recorded_without_asking_anyone(server, tmp_path):
     assert not result.is_error
     assert result.structured_content["verdict"] == "pass"
     [line] = log_lines(tmp_path, "inspections.jsonl")
-    assert json.loads(line) | {"time": None} == {
-        "time": None, "image_id": image_id, "part_id": "tray-07", "verdict": "pass",
-        "findings": "All three tools present.", "fail_confirmation": "not asked",
-        "recorded_by": "local"}
+    assert json.loads(line) | {"time": None, "photo_sha256": None} == {
+        "time": None, "image_id": image_id, "photo_sha256": None, "part_id": "tray-07",
+        "ai_verdict": "pass", "ai_findings": "All three tools present.",
+        "fail_confirmation": "not asked", "verdict": "pass", "user": "local"}
+    assert log_lines(tmp_path, "audit.log")[-1].endswith(
+        f"local record_inspection tray-07 pass {image_id} (AI: pass, fail confirmation: not asked)")
+
+
+async def test_a_record_holds_the_fingerprint_of_its_photo(server, tmp_path):
+    async with Client(server, elicitation_callback=nobody()) as client:
+        image_id = await take_photo(client)
+        await client.call_tool("record_inspection", record(image_id))
+    photo = (tmp_path / "data" / "captures" / f"{image_id}.jpg").read_bytes()
+    [line] = log_lines(tmp_path, "inspections.jsonl")
+    assert json.loads(line)["photo_sha256"] == hashlib.sha256(photo).hexdigest()
+
+
+async def test_times_carry_their_offset_from_utc(server, tmp_path):
+    # Without it, the hour that repeats when clocks go back could not be told apart.
+    async with Client(server, elicitation_callback=nobody()) as client:
+        image_id = await take_photo(client)
+        await client.call_tool("record_inspection", record(image_id))
+    [line] = log_lines(tmp_path, "inspections.jsonl")
+    for time in (json.loads(line)["time"], *(l.split()[0] for l in log_lines(tmp_path, "audit.log"))):
+        assert datetime.fromisoformat(time).utcoffset() is not None, time
 
 
 async def test_unsure_is_recorded_and_says_a_person_should_look(server):
@@ -220,8 +243,8 @@ async def test_fail_is_recorded_when_the_human_says_yes(server, tmp_path):
     assert "part tray-07" in operator.asked[0] and "torn" in operator.asked[0]
     assert "FAILED" in operator.asked[0] and "UNSURE" in operator.asked[0]
     assert len(log_lines(tmp_path, "inspections.jsonl")) == 1
-    assert "tray-07 fail" in log_lines(tmp_path, "audit.log")[-1]
-    assert "(fail confirmation: yes)" in log_lines(tmp_path, "audit.log")[-1]
+    assert f"tray-07 fail {image_id} (AI: fail, fail confirmation: yes)" \
+        in log_lines(tmp_path, "audit.log")[-1]
 
 
 @pytest.mark.parametrize("answer, confirmation", [
@@ -235,9 +258,10 @@ async def test_fail_without_a_yes_is_recorded_as_unsure(server, tmp_path, answer
     assert not result.is_error
     assert "a person should look" in result.structured_content["note"]
     [line] = log_lines(tmp_path, "inspections.jsonl")
+    assert json.loads(line)["ai_verdict"] == "fail"   # what the AI proposed stays on record
     assert json.loads(line)["verdict"] == "unsure"
     assert json.loads(line)["fail_confirmation"] == confirmation
-    assert f"tray-07 unsure {image_id} (fail confirmation: {confirmation})" \
+    assert f"tray-07 unsure {image_id} (AI: fail, fail confirmation: {confirmation})" \
         in log_lines(tmp_path, "audit.log")[-1]
 
 

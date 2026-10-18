@@ -44,7 +44,7 @@ pip install -e .
 inspection-client
 ```
 
-In the window, ask for example: "Take a photo. What does the gauge read?" The rest of
+In the window, ask for example: "Take a photo. Is the tool tray complete?" The rest of
 this README explains each step, other setups, and logins.
 
 ## What an inspection station is
@@ -230,7 +230,7 @@ you installed it (`source .venv/bin/activate` in this repository's folder, or
 ## Try it on one computer
 
 Without a camera, the server can use a fake one, which serves stored photos of the demo
-scenes (a gauge, packs, a scale, a tool tray, watches), a new one for every photo taken.
+scenes (a tool tray, watches, packs, a scale, a gauge), a new one for every photo taken.
 
 **In a first terminal**, with the server's environment active, in the folder
 `inspection-mcp-server`, start the camera server, and leave it running:
@@ -258,9 +258,9 @@ inspection-client
 
 The status line at the bottom of the window says "Connected" and lists the server's
 tools; the live view on the left shows the photo the fake camera will serve next. Ask,
-for example: "Take a photo. What does the gauge read?" Then ask "Take another photo.
-Inspect the packs for damage; they are part packs-01. Record the result." If Claude
-finds a pack damaged, the confirmation dialog comes up.
+for example: "Take a photo. Is the tool tray complete?" Then ask "Take another photo.
+Check that every tool is in the tray; it is part tray-02. Record the result." If Claude
+finds a tool missing, the confirmation dialog comes up.
 
 To stop, close the window, and press Ctrl+C in the server's terminal. The photos the
 server took are in `inspection-mcp-server/captures/`, its logs in `inspection-mcp-server/logs/`.
@@ -322,16 +322,16 @@ inspection-client --login
 ```
 
 The app opens the login page in your browser. Log in as `viewer`; the browser says
-"Logged in", and the window "Logged in as viewer". Ask, for example, "Take a photo.
-What does the gauge read? Record it as part gauge-01." (The fake camera serves its
-photos in turn, the gauge first.) The camera server refuses to record, with the reason,
-shown in red; Claude reads the refusal and tells you. Close the window, start the app
-again, and log in as `inspector` (if the login page offers `viewer` again, the round
-arrows next to the name start over with another user). Ask "Take a photo. Inspect the
-packs for damage; they are part packs-01. Record the result.": the next photo shows the
-packs, and now the result is recorded, after the confirmation dialog if Claude finds a
-pack damaged. Every line of `inspection-mcp-server/logs/audit.log` and every record names the
-person logged in.
+"Logged in", and the window "Logged in as viewer". Ask, for example, "Take a photo. Is
+the tool tray complete? Record it as part tray-01." (The fake camera serves its photos
+in turn, the complete tool tray first.) The camera server refuses to record, with the
+reason, shown in red; Claude reads the refusal and tells you. Close the window, start
+the app again, and log in as `inspector` (if the login page offers `viewer` again, the
+round arrows next to the name start over with another user). Ask "Take a photo. Check
+that every tool is in the tray; it is part tray-02. Record the result.": the next photo
+shows the tray with its hammer missing, and now the result is recorded, after the
+confirmation dialog if Claude finds a tool missing. Every line of
+`inspection-mcp-server/logs/audit.log` and every record names the person logged in.
 
 The app keeps the login only while it runs: each start asks again. A login token is
 valid for a few minutes (the demo's: 5); the app renews it by itself while it runs, as

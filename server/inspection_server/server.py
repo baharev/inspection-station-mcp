@@ -42,6 +42,7 @@ Environment:
 
 import argparse
 import asyncio
+import hashlib
 import hmac
 import io
 import json
@@ -70,6 +71,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from PIL import Image as PILImage
 from pydantic import BaseModel, Field
+from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, PlainTextResponse, Response
 
@@ -112,15 +114,55 @@ FailConfirmation = Literal["not asked", "yes", "no", "declined", "no answer"]
 class InspectionRecord(BaseModel):
     time: str
     image_id: str
+    photo_sha256: str = Field(description="The photo file's fingerprint: if the file is "
+                                          "changed or replaced later, it no longer matches")
     part_id: str
-    verdict: Literal["pass", "fail", "unsure"]
-    findings: str
+    ai_verdict: Literal["pass", "fail", "unsure"] = Field(description="What the AI proposed")
+    ai_findings: str = Field(description="What the AI saw, in its words")
     fail_confirmation: FailConfirmation = Field(
         description="'not asked' unless the AI proposed a fail; without a 'yes' the verdict "
                     "is unsure")
-    recorded_by: str = Field(description="Who recorded it: a login's user name, "
-                                         "'api-key' or 'local'")
+    verdict: Literal["pass", "fail", "unsure"] = Field(
+        description="What was recorded: the AI's verdict, but a fail only with a person's yes")
+    user: str = Field(description="Whose login the AI used: a login's user name, "
+                                  "'api-key' (the secret key) or 'local' (stdio)")
     note: str = ""
+
+
+def now() -> str:
+    """The time with its offset from UTC, so the hour that repeats when clocks go back is
+    still clear."""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def write_audit(logs: Path, who: str, text: str) -> None:
+    with open(logs / "audit.log", "a", encoding="utf-8") as f:
+        f.write(f"{now()} {who} {text}\n")
+
+
+class LogRefusals:
+    """Writes requests refused for want of a valid key or login token to the audit log.
+
+    The SDK refuses them before any tool runs, so the tools never see them.
+    """
+
+    def __init__(self, app, logs: Path):
+        self.app, self.logs = app, logs
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def send_and_log(message):
+            if message["type"] == "http.response.start" and message["status"] == 401:
+                sent = any(name == b"authorization" for name, _ in scope["headers"])
+                address = scope["client"][0] if scope.get("client") else "an unknown address"
+                write_audit(self.logs, "unknown", f"REFUSED {scope['path']} from {address}: "
+                            + ("key or login token not accepted" if sent
+                               else "no key or login token sent"))
+            await send(message)
+
+        await self.app(scope, receive, send_and_log)
 
 
 def from_this_computer(request: Request) -> bool:
@@ -188,8 +230,7 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
 
     # Never print() in a stdio server: stdout carries the protocol. Logs go to files.
     def audit(text: str) -> None:
-        with open(logs / "audit.log", "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().isoformat(timespec='seconds')} {caller()[0]} {text}\n")
+        write_audit(logs, caller()[0], text)
 
     def require(role: str, tool: str) -> None:
         name, roles = caller()
@@ -357,31 +398,39 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         """
         require(INSPECTOR, "record_inspection")
         check_record(image_id)
-        confirmation = "not asked"
+        confirmation, recorded = "not asked", verdict
         if verdict == "fail":
             if isinstance(answer, AcceptedElicitation):
                 confirmation = "yes" if answer.data.record else "no"
             else:
                 confirmation = "declined" if answer.action == "decline" else "no answer"
             if confirmation != "yes":
-                verdict = "unsure"
+                recorded = "unsure"
         record = InspectionRecord(
-            time=datetime.now().isoformat(timespec="seconds"), image_id=image_id,
-            part_id=part_id, verdict=verdict, findings=findings,
-            fail_confirmation=confirmation, recorded_by=caller()[0],
+            time=now(), image_id=image_id,
+            photo_sha256=hashlib.sha256(photo_path(image_id).read_bytes()).hexdigest(),
+            part_id=part_id, ai_verdict=verdict, ai_findings=findings,
+            fail_confirmation=confirmation, verdict=recorded, user=caller()[0],
         )
         with open(inspection_log, "a", encoding="utf-8") as f:
             f.write(record.model_dump_json(exclude={"note"}) + "\n")
-        audit(f"record_inspection {part_id} {verdict} {image_id}"
-              + ("" if confirmation == "not asked" else f" (fail confirmation: {confirmation})"))
+        audit(f"record_inspection {part_id} {recorded} {image_id} "
+              f"(AI: {verdict}, fail confirmation: {confirmation})")
         if confirmation not in ("not asked", "yes"):
             record.note = (f"The fail was not confirmed (answer: {confirmation}), so part "
                            f"{part_id} was recorded as unsure: a person should look at it.")
-        elif verdict == "unsure":
+        elif recorded == "unsure":
             record.note = f"Recorded as unsure: a person should look at part {part_id}."
         return record
 
     return mcp
+
+
+def http_app(server: MCPServer, data_dir: str | Path = REPO, host: str = "127.0.0.1") -> Starlette:
+    """The server over HTTP, with the refused requests in the audit log."""
+    app = server.streamable_http_app(host=host)
+    app.add_middleware(LogRefusals, logs=Path(data_dir) / "logs")
+    return app
 
 
 def key_auth(key: str) -> dict:
@@ -562,7 +611,7 @@ def main() -> None:
         auth = oauth_auth(issuer, server_url)
     else:
         auth = key_auth(secret_key())
-    app = create_server(camera, data_dir, **auth).streamable_http_app(host=args.host)
+    app = http_app(create_server(camera, data_dir, **auth), data_dir, args.host)
     for line in next_steps(args.host, args.port, "https" if args.tls_cert else "http",
                            key_file=not issuer and not os.environ.get("API_KEY", "").strip(),
                            address=network_address(), mcp_url=server_url):

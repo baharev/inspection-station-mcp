@@ -30,7 +30,7 @@ from mcp.client.streamable_http import streamable_http_client
 from PIL import Image
 
 from inspection_server.camera import FakeCamera
-from inspection_server.server import create_server, key_auth, oauth_auth, secret_key
+from inspection_server.server import create_server, http_app, key_auth, oauth_auth, secret_key
 
 pytestmark = pytest.mark.anyio
 
@@ -55,7 +55,7 @@ def make_app(tmp_path, auth):
     samples = tmp_path / "samples"
     samples.mkdir()
     Image.new("RGB", (640, 480), (220, 30, 30)).save(samples / "a.jpg")
-    return create_server(FakeCamera(samples), tmp_path / "data", **auth).streamable_http_app()
+    return http_app(create_server(FakeCamera(samples), tmp_path / "data", **auth), tmp_path / "data")
 
 
 @pytest.fixture
@@ -93,10 +93,14 @@ async def http(app, headers=None, client=THIS_COMPUTER):
 
 @pytest.mark.parametrize("headers", [None, {"Authorization": "Bearer wrong"},
                                      {"Authorization": KEY}])   # no "Bearer"
-async def test_requests_without_the_key_are_refused(app, headers):
-    async with http(app, headers) as client:
+async def test_requests_without_the_key_are_refused(app, headers, tmp_path):
+    async with http(app, headers, client=ELSEWHERE) as client:
         response = await client.post(URL, json={})
     assert response.status_code == 401
+    # Refused before any tool runs, and still in the audit log:
+    reason = "no key or login token sent" if headers is None else "key or login token not accepted"
+    assert [line.split(" ", 1)[1] for line in audit_lines(tmp_path)] == [
+        f"unknown REFUSED /mcp from 192.0.2.5: {reason}"]
 
 
 async def test_with_the_key_the_tools_work(app):
@@ -140,7 +144,7 @@ async def test_an_inspector_records_under_their_name(login_app, tmp_path):
                 "image_id": image_id, "part_id": "tray-07", "verdict": "pass",
                 "findings": "All tools present."})
     assert not result.is_error
-    assert result.structured_content["recorded_by"] == "inspector"
+    assert result.structured_content["user"] == "inspector"
     assert all(line.split()[1] == "inspector" for line in audit_lines(tmp_path))
 
 
@@ -334,7 +338,7 @@ def published_login_app(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("forged", FORGED.values(), ids=FORGED.keys())
-async def test_forged_and_tampered_tokens_are_refused(published_login_app, forged):
+async def test_forged_and_tampered_tokens_are_refused(published_login_app, forged, tmp_path):
     app, fetched = published_login_app
     headers = {"Authorization": f"Bearer {forged}"}
     async with http(app, headers, client=ELSEWHERE) as client:
@@ -342,6 +346,9 @@ async def test_forged_and_tampered_tokens_are_refused(published_login_app, forge
         live = await client.get(LIVE, headers=headers)
     assert response.status_code == 401 and live.status_code == 401
     assert set(fetched) <= {KEYS_URL}   # never the attacker's keys
+    assert [line.split(" ", 1)[1] for line in audit_lines(tmp_path)] == [
+        f"unknown REFUSED {path} from 192.0.2.5: key or login token not accepted"
+        for path in ("/mcp", "/live/frame.jpg")]
 
 
 @pytest.mark.parametrize("fair", [signed(), signed(claims(aud=["account", URL]))],
@@ -382,7 +389,8 @@ async def test_a_refused_token_is_refused_on_this_computer_too(login_app, tmp_pa
         response = await client.get("http://localhost:8000/live/frame.jpg",
                                     headers=token("viewer", exp=int(time.time()) - 10))
     assert response.status_code == 401
-    assert not (tmp_path / "data" / "logs" / "audit.log").exists()
+    assert [line.split(" ", 1)[1] for line in audit_lines(tmp_path)] == [
+        "unknown REFUSED /live/frame.jpg from 127.0.0.1: key or login token not accepted"]
 
 
 @pytest.mark.parametrize("headers", [None, {"Authorization": "Bearer wrong"}])
@@ -419,7 +427,8 @@ async def test_a_login_needs_the_viewer_role_for_the_live_view(login_app, tmp_pa
 async def test_a_camera_failure_is_shown_on_the_live_page(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
-    app = create_server(FakeCamera(empty), tmp_path / "data", **key_auth(KEY)).streamable_http_app()
+    app = http_app(create_server(FakeCamera(empty), tmp_path / "data", **key_auth(KEY)),
+                   tmp_path / "data")
     async with http(app) as client:
         response = await client.get("http://localhost:8000/live/frame.jpg")
     assert response.status_code == 503 and "no photos" in response.text

@@ -20,7 +20,10 @@ Author: [Ali Baharev](https://baharev.info/)
 
 ## Quick start
 
-On Linux, in a terminal, in this repository's folder:
+You need [Claude Code](https://www.anthropic.com/claude-code), which needs a paid Claude
+plan or a Claude API account, or the desktop app of the repository
+`inspection-mcp-client`, which needs a Claude API key. On Linux, in a terminal, in this
+repository's folder:
 
 ```
 python3 -m venv .venv
@@ -44,12 +47,20 @@ try it without one; for a camera, the suggested photo size is filled in, and the
 below it offers the others. Click **Start**. The box at the bottom then shows the address of
 the live view, and the command that connects Claude Code to the server: run that command
 once in the folder where you use Claude Code, start Claude Code there with `claude`, and
-ask "Take a photo. What does the gauge read?" The desktop app, in the repository
+ask "Take a photo. Is the tool tray complete?" The desktop app, in the repository
 `inspection-mcp-client`, connects without that command.
 
+The connection needs nothing else: at its first start, the server makes a secret key and
+keeps it in a file, `~/.config/inspection-server/api-key`. The command above reads the
+key from there, and so does the desktop app, so you never type it.
+
 On a computer without a screen, `inspection-server --http` starts the server in the
-terminal instead, and shows the same. The rest of this README explains each step, other
-setups, and logins.
+terminal instead, and shows the same. Other ways in, explained further down: Claude Code
+starting the server by itself, with no server to start
+([Try it on one computer](#try-it-on-one-computer)); the camera on one computer and
+Claude Code on another
+([The camera on one computer, Claude Code on another](#the-camera-on-one-computer-claude-code-on-another));
+a login for each person, with roles ([Logins with roles](#logins-with-roles)).
 
 ## What an inspection station is
 
@@ -129,10 +140,17 @@ told or tries:
   questions, as in non-interactive use with `claude -p`) or `no answer` (closed without
   answering). The question is asked only for a record that would otherwise be accepted.
 - **One record per photo**, so the log never holds two verdicts for the same picture.
-- **Everything is audit-logged** with the time and who called: photos, zooms, records,
-  refusals, the answer to each fail question and each visit to the live view
-  (`logs/audit.log`). Records go to `logs/inspections.jsonl`, one JSON object per line,
-  with the name of whoever recorded them.
+- **Everything is audit-logged** in `logs/audit.log`, one line per event, with the time
+  (and its offset from UTC) and who called: photos, zooms, records, refusals, the answer
+  to each fail question, each visit to the live view, and every request turned away for
+  want of a valid key or login (as `unknown`, with the address it came from).
+- **Records go to `logs/inspections.jsonl`**, one JSON object per line. Each keeps what
+  the AI proposed (`ai_verdict`, `ai_findings`) apart from what was recorded (`verdict`:
+  a fail only with a person's yes), names whose login the AI used (`user`), and holds the
+  photo's fingerprint (`photo_sha256`): if the photo in `captures/` is changed or replaced
+  later, `sha256sum captures/<photo ID>.jpg` (PowerShell: `Get-FileHash`) no longer
+  matches it. The logs themselves are plain text files on the station computer, so
+  whoever can change files there can change them too.
 - **Over the network, nobody gets in without a key or a login**, and a login's roles
   decide which tools its user may call: a viewer may take photos, look closer and watch
   the live view; an inspector may also record results. The server checks this at every
@@ -209,7 +227,7 @@ claude
 The first line registers the server for Claude Code, in this folder only and for you
 only (`-s local`); it is needed once. The second starts Claude Code. Type `/mcp` in
 Claude Code: it should show `inspection-server` as connected. Then ask, for example:
-"Take a photo of the inspection station. What does the gauge read?" When Claude records
+"Take a photo of the inspection station. Is the tool tray complete?" When Claude records
 a fail, Claude Code shows the server's question in the terminal, with the box "Mark this
 part as FAILED?" and the choices "Accept" and "Decline": "Accept" with the box ticked
 marks the part as failed; "Decline" marks it as unsure.
