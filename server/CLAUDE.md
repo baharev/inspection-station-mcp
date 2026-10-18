@@ -3,10 +3,10 @@
 An MCP server (Model Context Protocol, the standard way to plug tools, data and devices
 into an AI application such as Claude Code) that lets the AI take photos with a camera,
 look closer at part of a photo, and record inspection results. The safety rules are
-enforced in the server, not in the prompt. This repository holds the server, with its
+enforced in the server, not in the prompt. This folder holds the server, with its
 demo login server and a script for HTTPS certificates. Claude Code connects to it
-directly (the README shows how); the desktop app that uses it is in a repository of its
-own, `inspection-mcp-client`, and never imports this code.
+directly (the README shows how); the desktop app that uses it is in the folder
+`client` and never imports this code.
 
 ## Environment
 

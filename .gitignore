@@ -6,5 +6,6 @@ CLAUDE.local.md
 __pycache__/
 *.egg-info/
 .pytest_cache/
+.venv/
 build/
 dist/

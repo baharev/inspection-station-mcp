@@ -63,7 +63,7 @@
     {
       "clientId": "inspection-client",
       "name": "Inspection client",
-      "description": "The desktop app that uses the inspection server (repository inspection-mcp-client)",
+      "description": "The desktop app that uses the inspection server (folder client)",
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,

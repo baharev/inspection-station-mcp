@@ -39,8 +39,8 @@ was tightened in the code: the app answered any server question with a single fi
 its Yes/No dialog, even a question asking for text; it now turns down every question that
 is not a plain yes or no (bug 41). The tests went from 21 to 41.
 
-The inspection server in the companion repository `inspection-mcp-server` was checked the same
-way, with 28 bugs; its results are in that repository's `docs/test-quality.md`.
+The inspection server in the folder `server` was checked the same
+way, with 28 bugs; its results are in [`server/docs/test-quality.md`](../../server/docs/test-quality.md).
 
 The table names the test that catches each bug now. "Caught" means caught at first, with
 nothing to change. The numbers go on from the server's list.

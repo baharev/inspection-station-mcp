@@ -1,174 +1,30 @@
 # Inspection MCP server
 
-An MCP server that lets an AI application take photos with a camera, look closer at part
-of a photo, and record the result of an inspection. The safety rules are enforced in the
-server, not in the prompt. A page in the browser shows what the camera sees, live.
+The MCP server of [Inspection Station MCP](../README.md), for the station computer, the one
+the camera is plugged into. It lets an AI application take photos with the camera, look
+closer at part of a photo, and record the result of an inspection, with the rules enforced
+in the server; a page in the browser shows what the camera sees, live. Claude Code connects
+to it directly; the desktop app in the folder [`client`](../client/README.md) uses it too.
 
-A self-built demonstration of connecting a device to AI models through the
-[Model Context Protocol](https://modelcontextprotocol.io) (MCP), the standard way to
-plug tools, data and devices into AI applications such as Claude Code. It is small on
-purpose: about 1,600 lines of Python and 162 tests. It runs on one computer, or over the
-network with a secret key or with logins and roles.
+This README is the reference for installing and running the server. What it is for, the
+quick start, the AI's answers, the rules and the audit trail are in the
+[main README](../README.md).
 
-This repository holds the server, a demo login server and a script for HTTPS
-certificates. Claude Code connects to it directly. The companion repository
-`inspection-mcp-client` holds a desktop app that uses it, where Claude inspects with the camera and
-a person confirms every fail. To try it, see
-[Installing](#installing) and [How to start it](#how-to-start-it).
+## Contents
 
-Author: [Ali Baharev](https://baharev.info/)
-
-## Quick start
-
-You need [Claude Code](https://www.anthropic.com/claude-code), which needs a paid Claude
-plan or a Claude API account, or the desktop app of the repository
-`inspection-mcp-client`, which needs a Claude API key. On Linux, in a terminal, in this
-repository's folder:
-
-```
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-inspection-server-window
-```
-
-On Ubuntu and Debian, these need `sudo apt install python3-venv python3-tk` once. On
-Windows, in PowerShell, in this repository's folder:
-
-```
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -e .
-inspection-server-window
-```
-
-The last line opens the server window. Choose a camera, or "Sample photos, no camera" to
-try it without one; for a camera, the suggested photo size is filled in, and the list
-below it offers the others. Click **Start**. The box at the bottom then shows the address of
-the live view, and the command that connects Claude Code to the server: run that command
-once in the folder where you use Claude Code, start Claude Code there with `claude`, and
-ask "Take a photo. Is the tool tray complete?" The desktop app, in the repository
-`inspection-mcp-client`, connects without that command.
-
-The connection needs nothing else: at its first start, the server makes a secret key and
-keeps it in a file, `~/.config/inspection-server/api-key`. The command above reads the
-key from there, and so does the desktop app, so you never type it.
-
-Without any Claude access, `python scripts/try_tools.py` (after the `pip install` line)
-shows what the tools do: it plays the AI's part with fixed calls, a photo, a zoom and a
-proposed fail, and asks you in the terminal to confirm the fail.
-
-On a computer without a screen, `inspection-server --http` starts the server in the
-terminal instead, and shows the same. Other ways in, explained further down: Claude Code
-starting the server by itself, with no server to start
-([Try it on one computer](#try-it-on-one-computer)); the camera on one computer and
-Claude Code on another
-([The camera on one computer, Claude Code on another](#the-camera-on-one-computer-claude-code-on-another));
-a login for each person, with roles ([Logins with roles](#logins-with-roles)).
-
-## What an inspection station is
-
-A factory makes parts: a filled box, a tray of tools, a pack of food, a gauge. Before a
-part moves on to the next machine or to the customer, someone checks it. That check is
-the inspection, and the place where it happens is the inspection station: a table or a
-spot on the conveyor belt, with a camera and good lighting above it, and usually a screen
-for a worker, the operator.
-
-Each part gets one of three outcomes:
-
-- **Pass**: the part is fine and moves on.
-- **Fail**: the part is bad (torn, a tool missing, a reading out of range). It is taken
-  off the line, to be scrapped or repaired. A fail costs money, because a part is thrown
-  away or reworked.
-- **Unsure**: the check cannot tell. The part is put aside for a person to look at.
-
-Every outcome is also written down, with the part's label (such as `tray-07`), the time,
-the photo and what was seen. That list is the inspection log. Factories keep it because
-customers and quality rules demand proof that every part was checked, and so that bad
-parts can be traced back later.
-
-Simple checks are usually done by fixed camera software ("is there a hole at this
-spot?"). This demo is about the checks such software cannot do, the open questions: "is
-anything missing from this tray?", "does any of these watches show a different time?"
-
-In this demo, each photo stands for one part, and there is no production line: recording
-an outcome means writing one line to the inspection log, and nothing is moved or
-scrapped. The AI looks at the photo and decides pass, fail or unsure. A pass or an unsure
-is written down straight away. A fail is not: wrongly scrapping a good part costs money,
-so the server asks a person first (see [the rules](#the-rules-and-where-they-live)).
-
-![The setup. Left: the inspection station, where no AI runs: a camera above a conveyor belt, and the station computer with the MCP server, which keeps the inspection log. Right: the operator's computer with the desktop app, which talks to the MCP server over the network and to Claude, the AI, on the internet.](docs/setup.svg)
-
-The desktop app is in the companion repository `inspection-mcp-client`; Claude Code can take its
-place. The station computer, the one the camera is plugged into, and the operator's
-computer can also be one and the same, and the camera a USB webcam, or the fake camera,
-which serves stored photos instead.
-
-## The tools
-
-| Tool | What it does |
-|---|---|
-| `capture_image` | Takes a photo at the size chosen for the camera, saves it at that size, and returns it, capped at 1280×720 pixels, with an ID such as `20261014-213005`. Changes nothing else. |
-| `zoom_image(image_id, left, top, width, height)` | "Look closer": crops a rectangle of an earlier photo (given as fractions of the photo, 0 to 1) and returns it enlarged. Read-only. |
-| `record_inspection(image_id, part_id, verdict, findings)` | Adds one record to the inspection log. Verdict `pass`, `fail` or `unsure`. A fail needs a person's yes; without it, the part is recorded as unsure. |
-
-The photo ID is passed explicitly from one call to the next: the MCP protocol version
-used here (2026-07-28) keeps no session between calls.
-
-The zoom tool lets the AI decide for itself that it cannot see well enough and take a
-closer look, for example at a small label in a corner. Enlarging shows what the camera
-captured more clearly; it cannot add detail the camera did not capture. It crops the
-saved photo, at its full size, so a larger photo size shows more when zoomed (see
-[The photo size](#the-photo-size)). Very small print
-needs a camera closer to the object, so crops smaller than a tenth of the photo are
-refused.
-
-## The rules, and where they live
-
-All in the server code (`inspection_server/server.py`), so they hold whatever the AI is
-told or tries:
-
-- **Inputs are checked.** Photo IDs, part labels, verdicts and the length of the findings
-  must have the expected form; anything else is refused with a readable reason. A photo
-  ID can never point to another file.
-- **Limits are in code.** The photo the AI is sent is capped at 1280×720 pixels; zoom
-  rectangles must lie inside the photo and not be too small.
-- **A person confirms a fail.** In a plant, a failed part would be taken off the line,
-  so before a fail is recorded the server asks the person at the keyboard, through the
-  part of MCP that lets a server ask the user a question ("elicitation"). If they agree,
-  the part is recorded as failed. If they say no, decline the question or close it, the
-  part is recorded as unsure, to be put aside for a person to look at. Each record says
-  what happened to the question: `fail_confirmation` is `not asked` (the AI did not
-  propose a fail), `yes`, `no`, `declined` (turned down: a person chose "Decline", or the
-  AI application turned it down by itself, as in non-interactive use with `claude -p`),
-  `no answer` (closed without answering) or `cannot ask` (the AI application says it
-  cannot show questions, so nobody was asked). The question is asked only for a record
-  that would otherwise be accepted, and the person has an hour to answer it. Every fail
-  the AI proposes is in the audit log from the moment the person is asked; a record
-  follows unless the answer never comes, comes after more than an hour, or comes after
-  the server was restarted (then the answer is refused, nothing is recorded, and the AI
-  has to propose the fail again).
-- **One record per photo**, so the log never holds two verdicts for the same picture.
-- **Everything is audit-logged** in `logs/audit.log`, one line per event, with the time
-  (and its offset from UTC) and who called: photos (with their fingerprint), zooms,
-  records, refusals, each fail question when it is asked and its answer, each visit to
-  the live view, and every request turned away for want of a valid key or login (as
-  `unknown`, with the address it came from).
-- **Records go to `logs/inspections.jsonl`**, one JSON object per line. Each keeps what
-  the AI proposed (`ai_verdict`, `ai_findings`) apart from what was recorded (`verdict`:
-  a fail only with a person's yes), names whose login the AI used (`user`), and holds the
-  photo's fingerprint (`photo_sha256`): if the photo in `captures/` is changed or replaced
-  later, `sha256sum captures/<photo ID>.jpg` (PowerShell: `Get-FileHash`) no longer
-  matches it. The logs themselves are plain text files on the station computer, so
-  whoever can change files there can change them too.
-- **Over the network, nobody gets in without a key or a login**, and a login's roles
-  decide which tools its user may call: a viewer may take photos, look closer and watch
-  the live view; an inspector may also record results. The server checks this at every
-  call; the AI application cannot change it. The one exception: the live view needs no
-  key on the camera's own computer.
-
-Tool annotations such as "read-only" are also set, but they are only hints for the
-AI application, not protection.
+- [Installing](#installing)
+- [How to start it](#how-to-start-it)
+- [Claude Code starts the server](#claude-code-starts-the-server)
+- [The server and Claude Code on one computer](#the-server-and-claude-code-on-one-computer)
+- [The camera on one computer, Claude Code on another](#the-camera-on-one-computer-claude-code-on-another)
+- [Logins with roles](#logins-with-roles)
+- [The server window](#the-server-window)
+- [The live view](#the-live-view)
+- [Choosing a camera](#choosing-a-camera), and [the photo size](#the-photo-size)
+- [Settings and options](#settings-and-options)
+- [On Windows](#on-windows)
+- [How the tests were checked](#how-the-tests-were-checked)
+- [Files](#files)
 
 ## Installing
 
@@ -178,7 +34,7 @@ libraries it uses, but has not run on a Mac. The commands in this README are for
 and should work the same in the macOS Terminal; for PowerShell, see
 [On Windows](#on-windows).
 
-In a terminal, in this repository's folder:
+In a terminal, in the `server` folder:
 
 ```
 python3 -m venv .venv
@@ -201,17 +57,21 @@ source .venv/bin/activate
 
 Keep the `-e` in the install command: with it, the server finds its sample photos in
 `samples/`, and keeps the photos it takes in `captures/` and its logs in `logs/`, all in
-this folder (`captures/` and `logs/` are kept out of git).
+this folder (`captures/` and `logs/` are kept out of git). What the logs hold, and how to
+check them: [The audit trail](../README.md#the-audit-trail) in the main README.
 
 ## How to start it
 
 | Your situation | Who starts the server, and how | See |
 |---|---|---|
-| Try it on one computer, no camera needed | Claude Code starts it by itself; you run no server command | [Try it on one computer](#try-it-on-one-computer) |
-| One computer, and you want to watch the live view | You, in a terminal: `inspection-server --http` | [The live view on one computer](#the-live-view-on-one-computer) |
+| Claude Code on one computer, nothing else to start | Claude Code starts it by itself; you run no server command | [Claude Code starts the server](#claude-code-starts-the-server) |
+| One computer, with the live view, or with the desktop app | You, in a terminal: `inspection-server --http` | [The server and Claude Code on one computer](#the-server-and-claude-code-on-one-computer) |
 | The camera on one computer, Claude Code on another | You, on the station computer: `inspection-server --http --host 0.0.0.0` | [The camera on one computer, Claude Code on another](#the-camera-on-one-computer-claude-code-on-another) |
 | Either of the two above, but you would rather click than type | You, with a window: Start and Stop | [The server window](#the-server-window) |
 | Each person logs in, with a role | You, with a login server | [Logins with roles](#logins-with-roles) |
+
+The desktop app in the folder [`client`](../client/README.md) needs the server started by
+you, over HTTP, as in the second to the last row; the app's README has its own steps.
 
 The server never picks a camera by itself. The first time you start it in a terminal, it
 lists the cameras it finds and asks you to type the number of one. The last entry needs
@@ -219,14 +79,14 @@ no camera: the sample photos, served by a fake camera from `samples/`, one per p
 taken, in name order (see `samples/README.md`). The choice is saved, and later starts use
 it without asking; see [Choosing a camera](#choosing-a-camera).
 
-## Try it on one computer
+## Claude Code starts the server
 
 Here Claude Code starts the server itself, in the background, when Claude Code starts,
 and stops it when Claude Code ends. You never start the server; you only tell Claude
 Code once how to start it.
 
-In a terminal, with the environment active (`source .venv/bin/activate` in this
-repository's folder), go to the folder where you want to use Claude Code (any folder,
+In a terminal, with the environment active (`source .venv/bin/activate` in the
+`server` folder), go to the folder where you want to use Claude Code (any folder,
 this one too) and run:
 
 ```
@@ -263,12 +123,12 @@ run `inspection-server --choose-camera` again and restart Claude Code.
 This way has no live view: the live view needs the server running over HTTP, as in the
 next section.
 
-## The live view on one computer
+## The server and Claude Code on one computer
 
 Here you start the server yourself, over HTTP, and Claude Code connects to it. You need
 two terminals, both with the environment active.
 
-**Terminal 1**, in this repository's folder, starts the server:
+**Terminal 1**, in the `server` folder, starts the server:
 
 ```
 inspection-server --http
@@ -319,193 +179,8 @@ claude
 
 The first command registers the server with its key (once); the second starts Claude
 Code. Ask Claude Code for a photo as above, and open `http://localhost:8000/live` in a
-browser on this computer.
-
-## About the live view
-
-The page shows what the camera sees, up to five pictures a second, so you can set up a
-scene without a separate camera program. Below the picture, it shows the photo size and
-how many pictures a second the camera sends: fewer at larger photo sizes (see
-[The photo size](#the-photo-size)). Photos go on working while it is open: the
-server alone opens the camera, and the page and the photos share it. A photo is the
-first picture that arrives after it was asked for, so it shows the scene as it is then.
-
-- **On the computer the server runs on**: `http://localhost:8000/live`, no key needed.
-  Write `localhost`: under the computer's network address, the server treats the page as
-  coming from another computer.
-- **From another computer**: `http://<the server's address>:8000/live`. The page asks
-  for the secret key (show it with `cat ~/.config/inspection-server/api-key` and paste
-  it) and keeps it until the tab is closed.
-
-The page asks for pictures only while its tab is visible, and the server lets go of the
-camera a minute after the last picture or photo. With the fake camera, the page shows
-the photo that the next `capture_image` will return.
-
-## The server window
-
-A small window that starts and stops the server over HTTP, as `inspection-server --http`
-does in a terminal, for people who would rather click than type. The server is the same
-either way: the window runs that command for you and shows what it prints. Logins and
-HTTPS are not in the window; for those, start the server in a terminal.
-
-Start it once from a terminal with the environment active:
-
-```
-inspection-server-window
-```
-
-In the window:
-
-- **Camera**: the same list as in the terminal, and the same saved choice (see
-  [Choosing a camera](#choosing-a-camera)). Choose one before the first start. If the
-  camera chosen earlier is not plugged in, the list stays empty until you plug it in and
-  click **Look again**, or choose another; the window never takes another camera by
-  itself.
-- **Photo size**: the sizes the camera offers, as in the terminal (see
-  [The photo size](#the-photo-size)). Choosing a camera fills in the suggested size, and
-  saves it; choose another in the list if you like. The sample photos have no size to
-  choose. On Windows, opening the list for the first time takes a few seconds: the
-  window asks the camera which sizes it has.
-- **Let other computers connect**: the same as `--host 0.0.0.0`. The window remembers it,
-  in the same settings file as the camera (`"other_computers": true`). On Windows, other
-  computers also need the port opened in the firewall, as in
-  [On Windows](#on-windows).
-- **Start** and **Stop**. While the server runs, the box at the bottom shows what it
-  prints: the camera, where the key file is, the addresses of the live view and of the
-  server, and the command that connects Claude Code (select it and press Ctrl+C to copy
-  it). Where those lines mention `--host 0.0.0.0`, the checkbox does the same. Closing
-  the window stops the server too. If the server stops by itself, its last lines in the
-  box say why; a common reason is that port 8000 is taken, for example by a server
-  started in a terminal.
-- **Open live view**: opens `http://localhost:8000/live` in your browser.
-- **Copy the secret key**: puts the key on the clipboard, for making the key file on
-  another computer. On Linux, the clipboard keeps it only while the window is open.
-- **Put a shortcut on the desktop** (Windows and Linux): from then on, start the window
-  with a double click. The shortcut starts the window from this environment; if you
-  delete or move the environment, make the shortcut again.
-
-The window uses Tkinter, the window toolkit that comes with Python from python.org on
-Windows and macOS, and with Miniconda. Some Linux distributions ship it separately: if
-the window says that Tkinter is missing, install it (on Ubuntu and Debian:
-`sudo apt install python3-tk`). The window has not been tested on macOS yet.
-
-On Linux with Miniconda or Anaconda, the window's letters look rough, without smoothing:
-the Tkinter in Anaconda's own package channel is built that way. The one from the
-conda-forge channel draws them smoothly. Make the environment from there, then install
-the server into it, in this repository's folder:
-
-```
-conda create -n inspection-server -c conda-forge python=3.14 "tk=*=xft*"
-conda activate inspection-server
-pip install -e ".[test]"
-```
-
-`xft` is the build of Tk with smooth letters. If an environment `inspection-server` exists already,
-give the new one another name, or remove the old one first with
-`conda env remove -n inspection-server`. Windows is not affected.
-
-## Choosing a camera
-
-The server never picks a camera by itself: a person chooses one, once, by typing its
-number in a list. The server shows the list when it is started in a terminal with
-`--http` and no camera has been chosen yet (as in
-[The live view on one computer](#the-live-view-on-one-computer)). To show it at any time,
-also to change a choice or to choose before Claude Code starts the server, run:
-
-```
-inspection-server --choose-camera
-```
-
-Alone, this chooses and stops; with `--http` and the other options, it chooses and then
-starts the server.
-
-Each camera is listed with its maker and model; on Linux (any webcam the system's video
-drivers support), also whether it is built in or plugged in. The Windows list can also
-show virtual cameras that other programs install, such as OBS's; leave those out. The
-last entry, the sample photos, needs no camera. If your camera is missing, plug it in,
-press Ctrl+C and start again.
-
-The choice is saved in `~/.config/inspection-server/settings.json` (on Windows
-`$HOME\.config\inspection-server\settings.json`) as the camera's path on Linux, or its
-name on Windows and macOS (its device path, for two cameras of the same model). Never as
-its number in the list: numbers change when devices are plugged in. Every start shows
-which camera it uses. If the chosen camera is not there, the server stops at once and
-says so; it never takes another one instead. Where nobody can answer the list, as when
-Claude Code starts the server and no camera has been chosen yet, the server stops and
-says why.
-
-The setting `CAMERA`, if set, comes before the saved choice, for scripts and tests:
-`CAMERA=fake` for the sample photos, or a real camera, as
-`python scripts/check_camera.py` lists them (with single quotes, `CAMERA='<the value>'`:
-a name can contain spaces, and a Windows identifier contains `&`, which the terminal
-would otherwise take as an instruction of its own). A real camera in `CAMERA` needs its
-photo size in `CAMERA_SIZE` too, like `CAMERA_SIZE=1920x1080`; the script lists each
-camera's sizes, and without `CAMERA_SIZE` the server stops and lists them as well.
-Given the value, the same script takes one test photo, which goes to `captures/`:
-`python scripts/check_camera.py '<the value>'`, at the suggested size, or at another one
-given after it, as in `python scripts/check_camera.py '<the value>' 1280x720`.
-
-### The photo size
-
-After a camera, the server lists the photo sizes that camera offers, largest first, and
-asks for one, for example:
-
-```
-Asking the camera which photo sizes it offers; this can take a few seconds.
-Which photo size? Larger photos show more detail when the AI zooms in; the live view then shows fewer pictures a second.
-  1  2304x1536
-  2  1920x1080  (suggested)
-  3  1280x720
-  4  640x480
-Type its number (1 to 4), or press Enter for 1920x1080:
-```
-
-Press Enter for the suggested size, or type the number of another. The size is saved
-with the camera; `inspection-server --choose-camera` asks for both again. The setting
-`CAMERA_SIZE`, if set, comes before the saved size.
-
-The suggestion is 1920×1080 (Full HD) if the camera offers it, otherwise the largest size
-that fits inside 1920×1080. It is not simply the largest size: webcams often offer sizes
-larger than their sensor really delivers, enlarged from a smaller picture, which only
-make photos bigger and slower. A webcam tested here offers 2304×1536, for example, but
-its photos at that size show less detail than at 1920×1080. When in doubt, take a photo
-at each size with the check script and compare the same detail, enlarged.
-
-What the size changes:
-
-- **Zooms.** The AI is always sent the whole photo at 1280×720 pixels at most, so a
-  larger size costs nothing extra there. But the server keeps the photo at its full
-  size, and `zoom_image` crops that, so a larger photo shows more when the AI looks
-  closer.
-- **Pictures a second.** The camera sends its pictures uncompressed, and the cable
-  carries only so many: the webcam tested here sends 10 a second at 1280×720, 5 at
-  1920×1080 and fewer than 2 at 2304×1536. The live view gets jerkier, and the first
-  photo after the camera was idle takes longer, because the server waits for 20 pictures
-  so that the exposure can settle: about 2 seconds at 10 a second, 13 seconds at
-  2304×1536. Photos after that take a fraction of a second.
-
-Sizes under 640 pixels across are left out. On Linux, the list is the camera's own. On
-Windows and macOS, cameras do not report their sizes in the same way, so the server
-asks the camera for about fifteen common sizes and lists those it gets; a size the
-camera has but that is not among the common ones is missing. If the camera sends
-another size than the one chosen, photos are refused with the reason; the server never
-uses another size instead.
-
-A camera chosen before photo sizes could be chosen is kept: the next start in a terminal
-asks only for its size. Where nobody can answer, the server stops and says so.
-
-On macOS, the first use asks whether the terminal app may use the camera; if it was
-refused, allow it in System Settings, Privacy & Security, Camera. On Windows, if the
-camera does not open, check Settings, Privacy & security, Camera: "Camera access" and
-"Let desktop apps access your camera" must be on.
-
-Only one program at a time can read a camera. Close any other camera program before
-starting the server. While the server runs, it holds the camera whenever it is used and
-for a minute after, so the check script cannot open it then; use the live view instead.
-
-If the camera does not open while you are logged in over SSH: many Linux desktops give
-the camera only to the person logged in at the screen. Log in at the desktop too, or add
-yourself to the `video` group (`sudo usermod -aG video $USER`, then log in again).
+browser on this computer ([the live view](#the-live-view)). The desktop app connects to the
+same server without any command: it reads the same key file.
 
 ## The camera on one computer, Claude Code on another
 
@@ -513,7 +188,7 @@ The station computer runs the server; the other computer runs Claude Code and ne
 only Claude Code, not this repository. In the examples, the station computer's address on
 the network is 192.168.0.20 (the server shows it when it starts).
 
-**On the station computer**, in a terminal, in this repository's folder, after
+**On the station computer**, in a terminal, in the `server` folder, after
 [installing](#installing) and with the environment active:
 
 1. Start the server, and leave it running:
@@ -613,10 +288,10 @@ claims edited after signing, and more): all refused. `scripts/keycloak.sh` start
 [podman](https://podman.io/)) with two users: `inspector` (password `inspector`; may
 record results) and `viewer` (password `viewer`; may only take photos, look closer and
 watch the live view). Claude Code is registered there in advance, as an administrator
-would register each application that may connect, and so is the desktop app of the
-repository `inspection-mcp-client` (its README, "Logins with roles", has its steps).
+would register each application that may connect, and so is the desktop app (its steps:
+[Logins with roles](../client/README.md#logins-with-roles) in its README).
 
-On one computer, in three terminals (the first two in this repository's folder, with
+On one computer, in three terminals (the first two in the `server` folder, with
 the environment active):
 
 ```
@@ -669,6 +344,192 @@ Not demonstrated here, on purpose: logging in once for several servers (single s
 does this on a real login server), and Claude Code registering itself with the login
 server (dynamic client registration; most plants register applications by hand).
 
+## The server window
+
+A small window that starts and stops the server over HTTP, as `inspection-server --http`
+does in a terminal, for people who would rather click than type. The server is the same
+either way: the window runs that command for you and shows what it prints. Logins and
+HTTPS are not in the window; for those, start the server in a terminal.
+
+Start it once from a terminal with the environment active:
+
+```
+inspection-server-window
+```
+
+In the window:
+
+- **Camera**: the same list as in the terminal, and the same saved choice (see
+  [Choosing a camera](#choosing-a-camera)). Choose one before the first start. If the
+  camera chosen earlier is not plugged in, the list stays empty until you plug it in and
+  click **Look again**, or choose another; the window never takes another camera by
+  itself.
+- **Photo size**: the sizes the camera offers, as in the terminal (see
+  [The photo size](#the-photo-size)). Choosing a camera fills in the suggested size, and
+  saves it; choose another in the list if you like. The sample photos have no size to
+  choose. On Windows, opening the list for the first time takes a few seconds: the
+  window asks the camera which sizes it has.
+- **Let other computers connect**: the same as `--host 0.0.0.0`. The window remembers it,
+  in the same settings file as the camera (`"other_computers": true`). On Windows, other
+  computers also need the port opened in the firewall, as in
+  [On Windows](#on-windows).
+- **Start** and **Stop**. While the server runs, the box at the bottom shows what it
+  prints: the camera, where the key file is, the addresses of the live view and of the
+  server, and the command that connects Claude Code (select it and press Ctrl+C to copy
+  it). Where those lines mention `--host 0.0.0.0`, the checkbox does the same. Closing
+  the window stops the server too. If the server stops by itself, its last lines in the
+  box say why; a common reason is that port 8000 is taken, for example by a server
+  started in a terminal.
+- **Open live view**: opens `http://localhost:8000/live` in your browser.
+- **Copy the secret key**: puts the key on the clipboard, for making the key file on
+  another computer. On Linux, the clipboard keeps it only while the window is open.
+- **Put a shortcut on the desktop** (Windows and Linux): from then on, start the window
+  with a double click. The shortcut starts the window from this environment; if you
+  delete or move the environment, make the shortcut again.
+
+The window uses Tkinter, the window toolkit that comes with Python from python.org on
+Windows and macOS, and with Miniconda. Some Linux distributions ship it separately: if
+the window says that Tkinter is missing, install it (on Ubuntu and Debian:
+`sudo apt install python3-tk`). The window has not been tested on macOS yet.
+
+On Linux with Miniconda or Anaconda, the window's letters look rough, without smoothing:
+the Tkinter in Anaconda's own package channel is built that way. The one from the
+conda-forge channel draws them smoothly. Make the environment from there, then install
+the server into it, in the `server` folder:
+
+```
+conda create -n inspection-server -c conda-forge python=3.14 "tk=*=xft*"
+conda activate inspection-server
+pip install -e ".[test]"
+```
+
+`xft` is the build of Tk with smooth letters. If an environment `inspection-server` exists already,
+give the new one another name, or remove the old one first with
+`conda env remove -n inspection-server`. Windows is not affected.
+
+## The live view
+
+The page shows what the camera sees, up to five pictures a second, so you can set up a
+scene without a separate camera program. Below the picture, it shows the photo size and
+how many pictures a second the camera sends: fewer at larger photo sizes (see
+[The photo size](#the-photo-size)). Photos go on working while it is open: the
+server alone opens the camera, and the page and the photos share it. A photo is the
+first picture that arrives after it was asked for, so it shows the scene as it is then.
+
+- **On the computer the server runs on**: `http://localhost:8000/live`, no key needed.
+  Write `localhost`: under the computer's network address, the server treats the page as
+  coming from another computer.
+- **From another computer**: `http://<the server's address>:8000/live`. The page asks
+  for the secret key (show it with `cat ~/.config/inspection-server/api-key` and paste
+  it) and keeps it until the tab is closed.
+
+The page asks for pictures only while its tab is visible, and the server lets go of the
+camera a minute after the last picture or photo. With the fake camera, the page shows
+the photo that the next `capture_image` will return.
+
+## Choosing a camera
+
+The server never picks a camera by itself: a person chooses one, once, by typing its
+number in a list. The server shows the list when it is started in a terminal with
+`--http` and no camera has been chosen yet (as in
+[The server and Claude Code on one computer](#the-server-and-claude-code-on-one-computer)). To show it at any time,
+also to change a choice or to choose before Claude Code starts the server, run:
+
+```
+inspection-server --choose-camera
+```
+
+Alone, this chooses and stops; with `--http` and the other options, it chooses and then
+starts the server.
+
+Each camera is listed with its maker and model; on Linux (any webcam the system's video
+drivers support), also whether it is built in or plugged in. The Windows list can also
+show virtual cameras that other programs install, such as OBS's; leave those out. The
+last entry, the sample photos, needs no camera. If your camera is missing, plug it in,
+press Ctrl+C and start again.
+
+The choice is saved in `~/.config/inspection-server/settings.json` (on Windows
+`$HOME\.config\inspection-server\settings.json`) as the camera's path on Linux, or its
+name on Windows and macOS (its device path, for two cameras of the same model). Never as
+its number in the list: numbers change when devices are plugged in. Every start shows
+which camera it uses. If the chosen camera is not there, the server stops at once and
+says so; it never takes another one instead. Where nobody can answer the list, as when
+Claude Code starts the server and no camera has been chosen yet, the server stops and
+says why.
+
+The setting `CAMERA`, if set, comes before the saved choice, for scripts and tests:
+`CAMERA=fake` for the sample photos, or a real camera, as
+`python scripts/check_camera.py` lists them (with single quotes, `CAMERA='<the value>'`:
+a name can contain spaces, and a Windows identifier contains `&`, which the terminal
+would otherwise take as an instruction of its own). A real camera in `CAMERA` needs its
+photo size in `CAMERA_SIZE` too, like `CAMERA_SIZE=1920x1080`; the script lists each
+camera's sizes, and without `CAMERA_SIZE` the server stops and lists them as well.
+Given the value, the same script takes one test photo, which goes to `captures/`:
+`python scripts/check_camera.py '<the value>'`, at the suggested size, or at another one
+given after it, as in `python scripts/check_camera.py '<the value>' 1280x720`.
+
+### The photo size
+
+After a camera, the server lists the photo sizes that camera offers, largest first, and
+asks for one, for example:
+
+```
+Asking the camera which photo sizes it offers; this can take a few seconds.
+Which photo size? Larger photos show more detail when the AI zooms in; the live view then shows fewer pictures a second.
+  1  2304x1536
+  2  1920x1080  (suggested)
+  3  1280x720
+  4  640x480
+Type its number (1 to 4), or press Enter for 1920x1080:
+```
+
+Press Enter for the suggested size, or type the number of another. The size is saved
+with the camera; `inspection-server --choose-camera` asks for both again. The setting
+`CAMERA_SIZE`, if set, comes before the saved size.
+
+The suggestion is 1920×1080 (Full HD) if the camera offers it, otherwise the largest size
+that fits inside 1920×1080. It is not simply the largest size: webcams often offer sizes
+larger than their sensor really delivers, enlarged from a smaller picture, which only
+make photos bigger and slower. A webcam tested here offers 2304×1536, for example, but
+its photos at that size show less detail than at 1920×1080. When in doubt, take a photo
+at each size with the check script and compare the same detail, enlarged.
+
+What the size changes:
+
+- **Zooms.** The AI is always sent the whole photo at 1280×720 pixels at most, so a
+  larger size costs nothing extra there. But the server keeps the photo at its full
+  size, and `zoom_image` crops that, so a larger photo shows more when the AI looks
+  closer.
+- **Pictures a second.** The camera sends its pictures uncompressed, and the cable
+  carries only so many: the webcam tested here sends 10 a second at 1280×720, 5 at
+  1920×1080 and fewer than 2 at 2304×1536. The live view gets jerkier, and the first
+  photo after the camera was idle takes longer, because the server waits for 20 pictures
+  so that the exposure can settle: about 2 seconds at 10 a second, 13 seconds at
+  2304×1536. Photos after that take a fraction of a second.
+
+Sizes under 640 pixels across are left out. On Linux, the list is the camera's own. On
+Windows and macOS, cameras do not report their sizes in the same way, so the server
+asks the camera for about fifteen common sizes and lists those it gets; a size the
+camera has but that is not among the common ones is missing. If the camera sends
+another size than the one chosen, photos are refused with the reason; the server never
+uses another size instead.
+
+A camera chosen before photo sizes could be chosen is kept: the next start in a terminal
+asks only for its size. Where nobody can answer, the server stops and says so.
+
+On macOS, the first use asks whether the terminal app may use the camera; if it was
+refused, allow it in System Settings, Privacy & Security, Camera. On Windows, if the
+camera does not open, check Settings, Privacy & security, Camera: "Camera access" and
+"Let desktop apps access your camera" must be on.
+
+Only one program at a time can read a camera. Close any other camera program before
+starting the server. While the server runs, it holds the camera whenever it is used and
+for a minute after, so the check script cannot open it then; use the live view instead.
+
+If the camera does not open while you are logged in over SSH: many Linux desktops give
+the camera only to the person logged in at the screen. Log in at the desktop too, or add
+yourself to the `video` group (`sudo usermod -aG video $USER`, then log in again).
+
 ## Settings and options
 
 The server reads these settings from the environment; on Linux and macOS, write them in
@@ -702,7 +563,7 @@ The options of `inspection-server`:
 The same steps in PowerShell. Install in a virtual environment of its own:
 
 ```
-cd <this repository's folder>
+cd <the repository's folder>\server
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[test]"
@@ -711,7 +572,7 @@ pytest -q
 
 If activating fails because running scripts is disabled, allow your own scripts once
 with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. In every new PowerShell
-window, `cd` to the repository's folder first (a PowerShell started as administrator
+window, `cd` to the `server` folder first (a PowerShell started as administrator
 opens in `C:\Windows\System32`), then run `.venv\Scripts\Activate.ps1`.
 
 **With Miniconda** instead of a virtual environment (Miniconda brings its own Python):
@@ -722,24 +583,24 @@ environment with Python 3.14 and install into it, once:
 ```
 conda create -n inspection-server python=3.14
 conda activate inspection-server
-cd <this repository's folder>
+cd <the repository's folder>\server
 pip install -e ".[test]"
 pytest -q
 ```
 
 The first time, conda asks whether you accept the terms of service of Anaconda's package
 channels (three questions; answer `a` to each), then `Proceed ([y]/n)?`. In every new
-Anaconda PowerShell Prompt, run `conda activate inspection-server` and `cd` to the repository's folder;
+Anaconda PowerShell Prompt, run `conda activate inspection-server` and `cd` to the `server` folder;
 everything below then works as with the virtual environment.
 
-Try it on one computer (Claude Code starts the server):
+Claude Code starts the server:
 
 ```
 claude mcp add -s local inspection-server -e "CAMERA=fake" -- (Get-Command inspection-server).Source
 claude
 ```
 
-The live view on one computer: in window 1, start the server; in window 2, register it
+The server and Claude Code on one computer: in window 1, start the server; in window 2, register it
 with the key file (`$HOME\.config\inspection-server\api-key`) and start Claude Code:
 
 ```
@@ -849,7 +710,6 @@ checked the same way.
 - `scripts/keycloak.sh` and `keycloak/inspection-realm.json`: the demo login server, its
   users and roles
 - `scripts/make_certs.sh`: certificates for HTTPS between two computers
-- `docs/setup.svg`: the figure of the setup
 - `docs/test-quality.md`: how the tests were checked, with bugs planted on purpose
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk),
@@ -857,4 +717,4 @@ version 2.3.0.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](../LICENSE).

@@ -33,8 +33,8 @@ photo existed, so the check of its shape could go missing unnoticed. And a rule 
 twice hides one of the checks: the MCP SDK also refuses expired login tokens, so the
 server's own expiry check had never been tested on its own.
 
-The app in the companion repository `inspection-mcp-client` was checked the same way; its
-results are in that repository's `docs/test-quality.md`.
+The app in the folder `client` was checked the same way; its
+results are in [`client/docs/test-quality.md`](../../client/docs/test-quality.md).
 
 The tables name the test that catches each bug now. "Caught" means caught at first, with
 nothing to change.

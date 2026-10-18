@@ -2,7 +2,7 @@
 
 The login server and the browser are played by the test; the rest of the login (finding
 the login server, the token, renewing it) is the MCP SDK's, tested there, and was tried
-by hand with the demo login server of the inspection server's repository.
+by hand with the demo login server in the inspection server's folder.
 """
 
 import socket

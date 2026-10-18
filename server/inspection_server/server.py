@@ -30,7 +30,7 @@ Environment:
                  one of the sizes the camera offers, as scripts/check_camera.py lists them;
                  needed with a real camera in CAMERA
     SAMPLES_DIR  photos the fake camera serves (default: samples/)
-    DATA_DIR     where photos (captures/) and logs (logs/) are kept (default: this repo)
+    DATA_DIR     where photos (captures/) and logs (logs/) are kept (default: the server folder)
     API_KEY      with --http: the secret key every client must send, at least 32 characters;
                  if not set, the key in ~/.config/inspection-server/api-key, which the
                  server makes on its first start (copy the file to wherever the client
@@ -80,7 +80,7 @@ from starlette.responses import HTMLResponse, PlainTextResponse, Response
 from inspection_server import choice as camera_choice
 from inspection_server.camera import CameraError, FakeCamera, RealCamera
 
-REPO = Path(__file__).resolve().parent.parent
+SERVER_DIR = Path(__file__).resolve().parent.parent
 LIVE_PAGE = Path(__file__).resolve().parent / "live.html"
 
 MAX_PHOTO = (1280, 720)   # largest photo the AI is sent, in pixels; zooms use the full photo
@@ -239,7 +239,7 @@ class JwtVerifier:
                            subject=claims["sub"], claims=claims)
 
 
-def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | None = None,
+def create_server(camera, data_dir: str | Path = SERVER_DIR, *, auth: AuthSettings | None = None,
                   token_verifier=None) -> MCPServer:
     captures = Path(data_dir) / "captures"
     logs = Path(data_dir) / "logs"
@@ -510,7 +510,7 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
     return mcp
 
 
-def http_app(server: MCPServer, data_dir: str | Path = REPO, host: str = "127.0.0.1") -> Starlette:
+def http_app(server: MCPServer, data_dir: str | Path = SERVER_DIR, host: str = "127.0.0.1") -> Starlette:
     """The server over HTTP, with the refused requests in the audit log."""
     app = server.streamable_http_app(host=host)
     app.add_middleware(LogRefusals, logs=Path(data_dir) / "logs")
@@ -653,7 +653,7 @@ def main() -> None:
     choice = camera_choice.for_start(
         args.choose_camera, can_ask=sys.stdin.isatty() and (args.http or args.choose_camera))
     camera = open_camera(choice)
-    data_dir = os.environ.get("DATA_DIR", REPO)
+    data_dir = os.environ.get("DATA_DIR", SERVER_DIR)
     if args.choose_camera and not args.http:
         return   # chosen and saved: Claude Code starts the server with it from now on
     if not args.http:
@@ -685,7 +685,7 @@ def open_camera(choice: camera_choice.Choice) -> FakeCamera | RealCamera:
     """The camera chosen; a real one is checked now, not at the first photo, so whoever
     starts the server sees why it cannot work."""
     if choice.device == camera_choice.FAKE:
-        return FakeCamera(os.environ.get("SAMPLES_DIR", REPO / "samples"))
+        return FakeCamera(os.environ.get("SAMPLES_DIR", SERVER_DIR / "samples"))
     camera = RealCamera(choice.device, choice.size)
     try:
         camera.check()

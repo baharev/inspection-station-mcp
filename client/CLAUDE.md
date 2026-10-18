@@ -3,8 +3,8 @@
 An MCP server (Model Context Protocol, the standard way to plug tools, data and devices
 into an AI application such as Claude Code) lets the AI take photos with a camera, look
 closer at part of a photo, and record inspection results. The server, with its demo
-login server and certificate script, is in a repository of its own, `inspection-mcp-server`. This
-repository holds a desktop app (PySide6) that uses it. Claude Code connects to the
+login server and certificate script, is in the folder `server`. This
+folder holds a desktop app (PySide6) that uses it. Claude Code connects to the
 server directly, as the server's README shows; nothing for it lives here.
 
 ## What is here

@@ -4,7 +4,7 @@ The app depends only on what any inspection server offers over MCP: the tool nam
 arguments, a photo's ID in the field image_id (and, for Claude, in the text "Photo <ID>
 ..."), a refusal as a tool error, a question with the one yes-or-no field mark_failed
 before a fail is recorded, and the record's fields part_id, verdict, fail_confirmation
-and note. So the tests need neither the real server (repository inspection-mcp-server)
+and note. So the tests need neither the real server (folder server)
 nor a camera. What the stand-in got is kept in `answers`.
 """
 

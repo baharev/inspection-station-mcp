@@ -6,7 +6,7 @@ for a token, sends the token with every request, and renews it before it runs ou
 module adds what the SDK leaves to the application: opening the browser, receiving the
 login server's answer on this computer, and keeping the token. The app is registered at
 the login server in advance, as the client "inspection-client" (the demo login server in
-the inspection server's repository has it), the way an administrator registers each
+the inspection server's folder has it), the way an administrator registers each
 application that may connect; nothing is registered automatically.
 
 The token is kept in memory only: every start of the app logs in again.
