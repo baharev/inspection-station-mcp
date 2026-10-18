@@ -30,7 +30,7 @@ from mcp.client.streamable_http import streamable_http_client
 from PIL import Image
 
 from inspection_server.camera import FakeCamera
-from inspection_server.server import (CLOCK_LEEWAY, create_server, http_app, key_auth,
+from inspection_server.server import (CLOCK_LEEWAY, create_server, http_app, key_auth, main,
                                       oauth_auth, secret_key)
 
 pytestmark = pytest.mark.anyio
@@ -496,3 +496,13 @@ def test_a_short_key_stops_the_start(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as stop:
         secret_key(tmp_path / "api-key")
     assert "shorter than 32 characters" in str(stop.value.code)
+
+
+@pytest.mark.usefixtures("server_must_not_start")   # it sets API_KEY
+def test_a_start_with_both_the_key_and_logins_set_is_refused(monkeypatch):
+    monkeypatch.setenv("CAMERA", "fake")
+    monkeypatch.setenv("OAUTH_ISSUER", "http://localhost:8080/realms/inspection")
+    monkeypatch.setattr("sys.argv", ["inspection-server", "--http"])
+    with pytest.raises(SystemExit) as stop:
+        main()
+    assert stop.value.code == "Set either API_KEY or OAUTH_ISSUER, not both."

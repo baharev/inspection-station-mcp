@@ -26,7 +26,7 @@
   <!-- camera on its stand, looking down at the part -->
   <line x1="120" y1="519" x2="120" y2="172" stroke="#3b4452" stroke-width="7" stroke-linecap="round"/>
   <line x1="120" y1="174" x2="236" y2="174" stroke="#3b4452" stroke-width="7" stroke-linecap="round"/>
-  <polygon points="238,222 262,222 310,501 190,501" fill="#ffcf5a" opacity="0.35"/>
+  <polygon points="238,222 262,222 313,520 187,520" fill="#ffcf5a" opacity="0.35"/>
   <rect x="222" y="168" width="56" height="40" rx="7" fill="#3b4452"/>
   <circle cx="250" cy="214" r="10" fill="#7b8aa0" stroke="#3b4452" stroke-width="3"/>
   <text x="290" y="186" font-size="16" font-weight="700">camera</text>

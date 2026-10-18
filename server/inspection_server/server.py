@@ -647,6 +647,23 @@ def next_steps(host: str, port: int, scheme: str, key_file: bool,
 
 
 def main() -> None:
+    args = arguments()
+    # The menu needs a person at a terminal. Over stdio, the terminal carries the protocol:
+    # there, the menu is shown only with --choose-camera, and the server then stops.
+    choice = camera_choice.for_start(
+        args.choose_camera, can_ask=sys.stdin.isatty() and (args.http or args.choose_camera))
+    camera = open_camera(choice)
+    data_dir = os.environ.get("DATA_DIR", REPO)
+    if args.choose_camera and not args.http:
+        return   # chosen and saved: Claude Code starts the server with it from now on
+    if not args.http:
+        create_server(camera, data_dir).run()
+        return
+    print(choice.describe(), file=sys.stderr)
+    serve_http(camera, data_dir, args)
+
+
+def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="The inspection station as an MCP server.")
     parser.add_argument("--http", action="store_true",
                         help="serve over the network instead of stdio, with the secret key "
@@ -661,31 +678,27 @@ def main() -> None:
     parser.add_argument("--choose-camera", action="store_true",
                         help="choose the camera and its photo size in menus, also if they "
                              "were chosen before (the choice is saved for later starts)")
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    # The menu needs a person at a terminal. Over stdio, the terminal carries the protocol:
-    # there, the menu is shown only with --choose-camera, and the server then stops.
-    choice = camera_choice.for_start(
-        args.choose_camera, can_ask=sys.stdin.isatty() and (args.http or args.choose_camera))
+
+def open_camera(choice: camera_choice.Choice) -> FakeCamera | RealCamera:
+    """The camera chosen; a real one is checked now, not at the first photo, so whoever
+    starts the server sees why it cannot work."""
     if choice.device == camera_choice.FAKE:
-        camera = FakeCamera(os.environ.get("SAMPLES_DIR", REPO / "samples"))
-    else:
-        camera = RealCamera(choice.device, choice.size)
-        try:
-            camera.check()   # now, not at the first photo, so whoever starts it sees why
-        except CameraError as err:
-            if choice.source == camera_choice.FROM_CAMERA:
-                sys.exit(str(err))
-            sys.exit(f"The camera chosen earlier, {choice.name}, cannot be found. Is it "
-                     f"plugged in? Or choose another: {camera_choice.CHOOSE}")
-    data_dir = os.environ.get("DATA_DIR", REPO)
+        return FakeCamera(os.environ.get("SAMPLES_DIR", REPO / "samples"))
+    camera = RealCamera(choice.device, choice.size)
+    try:
+        camera.check()
+    except CameraError as err:
+        if choice.source == camera_choice.FROM_CAMERA:
+            sys.exit(str(err))
+        sys.exit(f"The camera chosen earlier, {choice.name}, cannot be found. Is it "
+                 f"plugged in? Or choose another: {camera_choice.CHOOSE}")
+    return camera
 
-    if args.choose_camera and not args.http:
-        return   # chosen and saved: Claude Code starts the server with it from now on
-    if not args.http:
-        create_server(camera, data_dir).run()
-        return
-    print(choice.describe(), file=sys.stderr)
+
+def serve_http(camera, data_dir: str | Path, args: argparse.Namespace) -> None:
+    """The server over the network, with the secret key or logins; prints how to connect."""
     server_url = None
     if issuer := os.environ.get("OAUTH_ISSUER", ""):
         if os.environ.get("API_KEY"):

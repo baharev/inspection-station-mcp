@@ -182,6 +182,14 @@ def test_a_chosen_camera_that_is_unplugged_stops_the_server_with_what_to_do(tmp_
     assert "--choose-camera" in str(stop.value.code)
 
 
+@pytest.mark.usefixtures("server_must_not_start")
+def test_choosing_the_camera_without_http_does_not_start_the_server(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["inspection-server", "--choose-camera"])
+    monkeypatch.setattr("inspection_server.choice.for_start", lambda *args, **kwargs:
+                        choice.Choice(choice.FAKE, choice.SAMPLE_PHOTOS, "chosen now"))
+    main()   # chosen and saved: Claude Code starts the server with it later
+
+
 def test_the_start_shows_the_addresses_and_the_claude_code_command():
     lines = next_steps("0.0.0.0", 8000, "http", key_file=True, address="192.168.0.20")
     assert lines[:3] == [

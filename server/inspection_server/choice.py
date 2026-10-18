@@ -141,36 +141,63 @@ def for_start(choose: bool, can_ask: bool, path: Path | None = None,
     choose: show the menus even if a camera was chosen earlier (--choose-camera).
     can_ask: someone can answer the menus in a terminal.
     """
-    size_setting = os.environ.get("CAMERA_SIZE", "").strip()
-    size = parse_size(size_setting)
-    if size_setting and not size:
-        sys.exit(f"CAMERA_SIZE is {size_setting!r}; write it as width x height in pixels, "
+    size = size_setting()
+    if choose:
+        settings_unset()
+    if device := os.environ.get("CAMERA", "").strip():
+        return from_setting(device, size)
+    path = path or SETTINGS_FILE
+    earlier = None if choose else saved(path)
+    if earlier and (earlier.device == FAKE or earlier.size or size):   # nothing to ask
+        earlier.size = None if earlier.device == FAKE else size or earlier.size
+        return earlier
+    return from_menus(earlier, size, can_ask, path, read, say)
+
+
+def size_setting() -> tuple[int, int] | None:
+    """The photo size in CAMERA_SIZE, if set; stops the start if it cannot be read."""
+    setting = os.environ.get("CAMERA_SIZE", "").strip()
+    size = parse_size(setting)
+    if setting and not size:
+        sys.exit(f"CAMERA_SIZE is {setting!r}; write it as width x height in pixels, "
                  "like 1920x1080.")
+    return size
+
+
+def settings_unset() -> None:
+    """Stops the start if CAMERA or CAMERA_SIZE is set: either would win over the menus."""
     for setting in ("CAMERA", "CAMERA_SIZE"):
-        if choose and os.environ.get(setting, "").strip():
+        if os.environ.get(setting, "").strip():
             sys.exit(f"The setting {setting} is set in this terminal, and it comes before "
                      "any choice made in the menu. Remove it first (Linux and macOS: "
                      f"unset {setting}; PowerShell: Remove-Item Env:{setting}), then start "
                      "again.")
-    if device := os.environ.get("CAMERA", "").strip():
-        if device == FAKE:
-            return Choice(device, SAMPLE_PHOTOS, FROM_CAMERA)
-        if not size:
-            sizes = ", ".join(size_text(s) for s in sizes_of(device))
-            sys.exit(f"CAMERA is set, so set CAMERA_SIZE too: the size of the photos, one of "
-                     f"those this camera offers: {sizes}.")
-        return Choice(device, device, FROM_CAMERA, size)
-    path = path or SETTINGS_FILE
-    choice = None if choose else saved(path)
-    if choice and (choice.device == FAKE or choice.size or size):
-        choice.size = None if choice.device == FAKE else size or choice.size
-        return choice
+
+
+def from_setting(device: str, size: tuple[int, int] | None) -> Choice:
+    """The camera in CAMERA; a real one needs its photo size in CAMERA_SIZE too."""
+    if device == FAKE:
+        return Choice(device, SAMPLE_PHOTOS, FROM_CAMERA)
+    if not size:
+        sizes = ", ".join(size_text(s) for s in sizes_of(device))
+        sys.exit(f"CAMERA is set, so set CAMERA_SIZE too: the size of the photos, one of "
+                 f"those this camera offers: {sizes}.")
+    return Choice(device, device, FROM_CAMERA, size)
+
+
+def from_menus(earlier: Choice | None, size: tuple[int, int] | None, can_ask: bool,
+               path: Path, read, say) -> Choice:
+    """Asks the camera and its photo size, and saves them; for a camera chosen before
+    photo sizes could be chosen (earlier), asks only the size. CAMERA_SIZE, if set,
+    stands in for the size menu."""
+    if not can_ask and earlier:
+        sys.exit(f"No photo size chosen yet. Choose it once, in a terminal: {CHOOSE} "
+                 "(or set CAMERA_SIZE, like 1920x1080).")
     if not can_ask:
-        sys.exit(f"No {'photo size' if choice else 'camera'} chosen yet. Choose "
-                 f"{'it' if choice else 'one'} once, in a terminal: {CHOOSE} (or set "
-                 + ("CAMERA_SIZE, like 1920x1080)." if choice else
-                    "CAMERA; CAMERA=fake serves the sample photos)."))
-    if choice:   # chosen before photo sizes could be chosen: only the size is asked
+        sys.exit(f"No camera chosen yet. Choose one once, in a terminal: {CHOOSE} "
+                 "(or set CAMERA; CAMERA=fake serves the sample photos).")
+    if earlier:
+        choice = earlier
         say(f"Camera: {choice.name}, chosen earlier.")
     else:
         device, name = ask(menu_entries(), read, say)

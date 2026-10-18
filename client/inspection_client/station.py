@@ -13,6 +13,7 @@ import os
 import weakref
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -215,6 +216,7 @@ class Station:
         self.connect = connect
         self.messages = []
         self.photos = {}   # image ID: JPEG bytes, to show in the confirmation dialog
+        self.running = {}  # the arguments of the tool call running now, for that dialog
 
     def new_conversation(self) -> None:
         self.messages = []
@@ -231,22 +233,8 @@ class Station:
         reported."""
         prices = MODELS[model]
         cost = 0.0
-        pending = {}   # the tool call running now, for the confirmation dialog
         made = 0       # tool calls made for this question
-
-        async def answer(params) -> ElicitResult:
-            """The answer to a question from the server: the person's yes or no to the
-            question about a fail; any other question is declined without asking."""
-            properties = (params.requested_schema.get("properties", {})
-                          if isinstance(params, ElicitRequestFormParams) else {})
-            if (list(properties) != [CONFIRM_FIELD]
-                    or properties[CONFIRM_FIELD].get("type") != "boolean"):
-                return ElicitResult(action="decline")
-            image_id = pending.get("arguments", {}).get("image_id")
-            said = await ask_person(Question(params.message, self.photos.get(image_id)))
-            if said is None:
-                return ElicitResult(action="cancel")
-            return ElicitResult(action="accept", content={CONFIRM_FIELD: said})
+        answer = partial(self.answer, ask_person=ask_person)
 
         async def confirm(context, params) -> ElicitResult:
             # Over the older protocol, the server asks during the tool call.
@@ -270,43 +258,72 @@ class Station:
                         output_config={"effort": EFFORT},
                     )
                     cost += price(response.usage, prices)
-                    self.messages.append({"role": "assistant", "content": response.content})
-                    calls = []
-                    for block in response.content:
-                        if block.type == "thinking" and block.thinking.strip():
-                            report(Note(block.thinking.strip()))
-                        elif block.type == "text" and block.text.strip():
-                            report(Answer(block.text.strip()))
-                        elif block.type == "tool_use":
-                            calls.append(block)
-                    if response.stop_reason == "end_turn":
-                        report(Done(cost))
-                        return
-                    if response.stop_reason != "tool_use" or not calls:
-                        # Unfinished, perhaps with a tool call cut off: Claude would refuse
-                        # every later question in a conversation that holds it.
-                        self.drop_unfinished_turn()
-                        why = UNFINISHED.get(response.stop_reason, "Claude stopped without "
-                                             f"answering ({response.stop_reason}).")
-                        report(Done(cost, f"{why} {DROPPED}"))
-                        return
-                    if made + len(calls) > MAX_TOOL_CALLS:
-                        self.drop_unfinished_turn()
-                        report(Done(cost, f"Stopped: Claude needed more than {MAX_TOOL_CALLS} "
-                                          f"tool calls for this question. {DROPPED}"))
+                    calls = self.take_reply(response, report)
+                    problem = self.stopped(response, calls, made)
+                    if problem is not None:
+                        report(Done(cost, problem))
                         return
                     made += len(calls)
-                    results = []
-                    for call in calls:   # all results go back to Claude in one message
-                        report(ToolCall(call.name, call.input))
-                        pending.update(name=call.name, arguments=call.input)
-                        result = await call_tool(server, call, report, answer)
-                        pending.clear()
-                        results.append(self.tool_result(call, result, report))
+                    # All results go back to Claude in one message.
+                    results = [await self.run_tool(server, call, report, answer) for call in calls]
                     self.messages.append({"role": "user", "content": results})
         except Exception as err:
             self.drop_unfinished_turn()
             report(Done(cost, f"Stopped: {describe(err)}"))
+
+    async def answer(self, params, ask_person: Ask) -> ElicitResult:
+        """The answer to a question from the server: the person's yes or no to the question
+        about a fail; any other question is declined without asking."""
+        properties = (params.requested_schema.get("properties", {})
+                      if isinstance(params, ElicitRequestFormParams) else {})
+        if (list(properties) != [CONFIRM_FIELD]
+                or properties[CONFIRM_FIELD].get("type") != "boolean"):
+            return ElicitResult(action="decline")
+        said = await ask_person(Question(params.message,
+                                         self.photos.get(self.running.get("image_id"))))
+        if said is None:
+            return ElicitResult(action="cancel")
+        return ElicitResult(action="accept", content={CONFIRM_FIELD: said})
+
+    def take_reply(self, response, report: Report) -> list:
+        """Adds Claude's reply to the conversation and reports its thinking and text;
+        returns the tool calls it asks for."""
+        self.messages.append({"role": "assistant", "content": response.content})
+        calls = []
+        for block in response.content:
+            if block.type == "thinking" and block.thinking.strip():
+                report(Note(block.thinking.strip()))
+            elif block.type == "text" and block.text.strip():
+                report(Answer(block.text.strip()))
+            elif block.type == "tool_use":
+                calls.append(block)
+        return calls
+
+    def stopped(self, response, calls: list, made: int) -> str | None:
+        """Why the question ends here: "" when Claude has answered, else what went wrong;
+        None while Claude goes on with the tool calls it asked for."""
+        if response.stop_reason == "end_turn":
+            return ""
+        if response.stop_reason != "tool_use" or not calls:
+            why = UNFINISHED.get(response.stop_reason, "Claude stopped without answering "
+                                 f"({response.stop_reason}).")
+        elif made + len(calls) > MAX_TOOL_CALLS:
+            why = (f"Stopped: Claude needed more than {MAX_TOOL_CALLS} tool calls for this "
+                   "question.")
+        else:
+            return None
+        # Unfinished, perhaps with a tool call cut off: Claude would refuse every later
+        # question in a conversation that holds it.
+        self.drop_unfinished_turn()
+        return f"{why} {DROPPED}"
+
+    async def run_tool(self, server: Client, call, report: Report, answer) -> dict:
+        """One tool call Claude asked for; returns the result as Claude reads it."""
+        report(ToolCall(call.name, call.input))
+        self.running = call.input
+        result = await call_tool(server, call, report, answer)
+        self.running = {}
+        return self.tool_result(call, result, report)
 
     def tool_result(self, call, result: CallToolResult, report: Report) -> dict:
         """The server's result, as Claude reads it; also reported to the window."""
