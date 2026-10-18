@@ -27,7 +27,11 @@ for, the quick start, Claude's answers and the rules are in the [main README](..
 
 ## What it does, step by step
 
-![The window. Left: the live view of the tool tray with its hammer missing. Right: the question, Claude's closer look at the tray, the fail recorded after the person's yes, and Claude's answer that the hammer is missing.](docs/app-main.png)
+![The window. Left: the live view of the tool tray with its hammer missing. Right: Claude's closer look at the tray, the fail recorded after the person's yes, and Claude's answer that the hammer is missing.](docs/app-main.png)
+
+Two of Claude's words in this screenshot are wrong, as the main README explains
+([quick start](../README.md#quick-start)): the table knife is not one of the tray's tools, and
+nothing was taken off any line.
 
 1. You type a question and press Enter.
 2. The app sends Claude the conversation, and the inspection server's tools: take a photo,
@@ -36,7 +40,8 @@ for, the quick start, Claude's answers and the rules are in the [main README](..
    gives the result, photos included, back to Claude. The window shows each step, in
    gray below your question: what Claude asked for, in plain words, and what came back.
    Tick "Show MCP messages" to see the messages themselves as well, as the Model
-   Context Protocol sends them between the app and the inspection server: indented, one
+   Context Protocol carries them between the app and the inspection server (their
+   contents, with pictures and the server's sealed state shortened): indented, one
    field per line, each message between two thin lines. Where a text holds JSON of its
    own, such as the inspection record, that JSON is shown unpacked, not as one string
    full of escapes. A fail question comes back as the call's result, with the server's
@@ -47,7 +52,7 @@ for, the quick start, Claude's answers and the rules are in the [main README](..
 The rules live in the inspection server, not in the app and not in what Claude is told: the
 server caps the photo size, refuses zooms too small to show anything but blur, keeps one
 record per photo, logs every action, and asks a person before marking a part as failed
-([the rules](../README.md#the-three-tools-and-the-rules-the-server-enforces)). The app only passes the server's
+([the rules](../README.md#the-tools-the-server-provides-and-the-rules-it-enforces)). The app only passes the server's
 question on to you, and your answer back. A refusal from the server is shown in red, and
 Claude reads it too.
 
@@ -63,7 +68,7 @@ computer, not the app: see [the audit trail](../README.md#the-audit-trail).
 ![The dialog "The inspection server asks you": the AI found a problem with part tray-02, the hammer is missing; if you agree, the part is marked FAILED, if not, UNSURE. Below, the photo of the tray, and the buttons "Yes, mark it as failed" and "No, put it aside".](docs/app-dialog.png)
 
 Each answer ends with what the question cost, and below the conversation the window
-shows what the whole conversation cost so far. In our tests, a question with a photo and a few closer looks
+shows what the whole conversation cost so far. In my tests, a question with a photo and a few closer looks
 cost $0.04 to $0.07 with Claude Opus 5.5 and $0.01 to $0.02 with Claude Sonnet 5.5; a
 short follow-up question costs less than a cent. You choose the model below the conversation.
 "New conversation" starts over; until then, Claude remembers the earlier questions and
@@ -71,10 +76,9 @@ photos, so you can ask "now look closer at the left one".
 
 ## Installing
 
-Python 3.13 or later: tested with 3.14; the tests also pass with 3.13. The app was
-tested on Linux and Windows; macOS is not tested yet. The commands are for Linux, and
-should work the same in the macOS Terminal; for PowerShell, see
-[On Windows](#on-windows).
+Python 3.13+. The app has never been tested on macOS; it should work there too. The
+commands are for Linux, and should work the same in the macOS Terminal; for PowerShell,
+see [On Windows](#on-windows).
 
 The app and the inspection server are separate programs. The app talks to the server only
 over the network, through MCP, even when both run on one computer; it needs no part of
@@ -82,7 +86,7 @@ the server installed beside it. So each has a Python environment of its own: the
 server's is made as its README describes, and the app's as below. There are two ways to
 make the app's environment; use one of them, not both:
 
-- [With a virtual environment](#with-a-virtual-environment), if Python 3.13 or later
+- [With a virtual environment](#with-a-virtual-environment), if Python 3.13+
   is installed on your computer. The environment is a folder, `.venv`, in the
   `client` folder.
 - [With conda](#with-conda), if you use Miniconda or Anaconda, which bring their own
@@ -202,7 +206,9 @@ of a real camera, to use it). The server remembers the choice; to choose again, 
 with `inspection-server --http --choose-camera`. It is ready when it shows "Uvicorn
 running on http://127.0.0.1:8000". Above that, it says where its secret key is:
 `~/.config/inspection-server/api-key`, made at its first start. The app reads the same
-file, so there is nothing to copy on one computer.
+file, so there is nothing to copy on one computer. (If the server was started with the
+setting `API_KEY` instead, set `API_KEY` for the app too: the app reads it before the
+file.)
 
 **In a second terminal**, with the app's environment active, start the app:
 
@@ -245,7 +251,8 @@ the key (the key files differ), or there is no inspection server at that address
 Instead of one key that everyone shares, each person can log in with their own name.
 The inspection server then knows who asks, writes the name into every log line and record,
 and lets each person do only what their role allows: a `viewer` may take photos, look
-closer and watch the live view; an `inspector` may also record results. The login
+closer and watch the live view; an `inspector` may also record results (the server checks
+each role on its own, so the demo's `inspector` has both). The login
 happens in the browser, at a login server, which hands the app a token that the
 inspection server checks. The server's README, [Logins with
 roles](../server/README.md#logins-with-roles), explains this in more detail; its script `scripts/keycloak.sh` starts a demo login server
@@ -375,7 +382,8 @@ The tests were tested too: 12 bugs were planted in the code by hand, one at a ti
 breaking something the app must get right the way a developer could really get it wrong
 (No in the fail dialog passed on as yes, the dialog showing the wrong photo, the live view
 sent without the key, and so on). At first, 2 were caught by a test that failed for the
-right reason with a clear message, and 8 got through with every test still passing. Each
+right reason with a clear message, and 8 got through with every test still passing; the other 2 were caught, but for the
+wrong reason or with an unclear message. Each
 gap now has a test, and all 12 are caught. Two parts that had no tests at all (how
 refusals are put into words, and how the start passes the key or login on) were then
 covered the same way, with 19 more planted bugs. The bugs and what each one showed:
@@ -408,7 +416,3 @@ Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol
 version 2.3.0, the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python)
 version 1.15.0, and [PySide6](https://doc.qt.io/qtforpython-6/) (Qt for Python) version
 6.12.0, its essential modules only (the package `PySide6-Essentials`).
-
-## License
-
-MIT, see [LICENSE](../LICENSE).

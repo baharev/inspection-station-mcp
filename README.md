@@ -7,14 +7,36 @@ without a person's yes.
 
 ![The setup. Left: the inspection station, where no AI runs: a camera above a conveyor belt, and the station computer with the MCP server, which keeps the inspection log. Right: the operator's computer with the desktop app, which talks to the MCP server over the network and to Claude, the AI, on the internet.](docs/setup.svg)
 
+The station computer is the one the camera is plugged into; the MCP server runs there and
+keeps the log. The operator's computer runs the desktop app, which talks to the server and
+to Claude; Claude Code can take the app's place. The two computers can also be one and the
+same, and the camera a USB webcam, or the fake camera, which serves stored photos instead.
+
 MCP, the [Model Context Protocol](https://modelcontextprotocol.io), is the standard way to
 plug tools, data and devices into AI applications such as Claude Code. This repository is a
 self-built demonstration of connecting a device to an AI that way: the server, a desktop app
-that uses it, photos of five test scenes, and the AI's real answers about them.
+that uses it, photos of five test scenes, and the AI's real answers about them. It shows:
 
-Author: [Ali Baharev](https://baharev.info/). This is a finished demonstration. I update it
-now and then, when the protocol changes or when I find a mistake, but I do not take requests:
-issues and pull requests are turned off. You are welcome to fork it under the MIT license.
+- **The rules in the server, not in the prompt**: inputs checked, limits in code, and a
+  person's yes before any fail, asked through the part of MCP that lets a server ask the
+  user a question ([the rules](#the-tools-the-server-provides-and-the-rules-it-enforces)).
+- **An audit trail** of every photo, closer look, record and fail question, with each
+  photo's fingerprint ([the audit trail](#the-audit-trail)).
+- **Logins with roles** over OAuth, with a demo login server, or one shared secret key;
+  over the network or started by Claude Code itself ([ways to run it](#other-ways-to-run-it)).
+- **A desktop app with its own Claude loop**, through the Anthropic API, which can show
+  every MCP message ([the app](client/README.md)).
+- **The AI's real answers**, its mistakes included ([what the AI answered](#what-the-ai-answered)),
+  and how the pattern grows into a plant ([from this demo to a plant](#from-this-demo-to-a-plant)).
+- **Tests that were tested**, by planting bugs on purpose ([reading the code](#reading-the-code));
+  checked on Linux and Windows, with a real webcam.
+
+Author: [Ali Baharev](https://baharev.info/). I built it with Claude Code, Anthropic's AI
+coding assistant, which wrote much of the code under my direction; the `CLAUDE.md` files are
+the instructions I keep for it. The design, the rules and what to check were my decisions.
+This is a finished demonstration, now in maintenance mode: I keep it working and up to date,
+but issues and pull requests are turned off. You are welcome to fork it under the
+[MIT license](LICENSE).
 
 ## Contents
 
@@ -22,8 +44,8 @@ issues and pull requests are turned off. You are welcome to fork it under the MI
 - [What an inspection station is](#what-an-inspection-station-is)
 - [Why an AI is needed here](#why-an-ai-is-needed-here)
 - [What the AI answered](#what-the-ai-answered)
-- [Which model?](#which-model)
-- [The three tools, and the rules the server enforces](#the-three-tools-and-the-rules-the-server-enforces)
+- [Choosing a model: Opus, Sonnet and Haiku compared](#choosing-a-model-opus-sonnet-and-haiku-compared)
+- [The tools the server provides, and the rules it enforces](#the-tools-the-server-provides-and-the-rules-it-enforces)
 - [What the server can and cannot guarantee](#what-the-server-can-and-cannot-guarantee)
 - [The audit trail](#the-audit-trail)
 - [Other ways to run it](#other-ways-to-run-it)
@@ -33,13 +55,27 @@ issues and pull requests are turned off. You are welcome to fork it under the MI
 
 ## Quick start
 
-You need Python 3.13 or later, and access to Claude: either
+You need Python 3.13+, and access to Claude: either
 [Claude Code](https://www.anthropic.com/claude-code), which needs a paid Claude plan or a
 Claude API account, or a Claude API key for the desktop app. No camera is needed: the
 server can serve stored sample photos instead.
 
-On Linux or macOS, in a terminal (on Ubuntu and Debian, `sudo apt install python3-venv`
-first, once):
+Check the Python version first, with `python3 --version` (in PowerShell,
+`python --version`). The Python that comes with the system is often too old: Ubuntu 24.04,
+for example, comes with Python 3.12, which will not work. Install a newer Python next to
+it, and write `python3.14` or `python3.13` instead of `python3` below.
+
+Would you rather click than type? `inspection-server-window` opens a small window that
+starts and stops the server ([the server window](server/README.md#the-server-window)).
+Other setups, such as the server on one computer and the app on another, Claude Code
+starting the server by itself, or a login for each person, are in
+[Other ways to run it](#other-ways-to-run-it).
+
+### On Linux or macOS
+
+It has never been tested on macOS; it should work there too, since the code follows the
+documentation of the libraries it uses. In a terminal (on Ubuntu and Debian,
+`sudo apt install python3-venv` first, once):
 
 ```
 git clone https://github.com/baharev/inspection-station-mcp.git
@@ -56,21 +92,30 @@ running; it is ready when it shows "Uvicorn running on http://127.0.0.1:8000". A
 start it also made a secret key, in the file `~/.config/inspection-server/api-key`; the
 commands below read it from there, so you never type it.
 
-**With Claude Code**, in a second terminal, in any folder:
+The sample photos come one per photo taken, in a fixed order: the complete tool tray first,
+then the tray with its hammer missing, then the other scenes. Each start of the server
+begins again with the first. While the server runs, `http://localhost:8000/live` in a
+browser shows what the camera sees; with the sample photos, the one the next photo will
+return.
+
+#### Without any Claude access
+
+A script plays the AI's part with fixed calls: a photo, a closer look and a proposed fail,
+which you confirm or not in the terminal. It needs no running server and no key: the
+server runs inside the script. In a second terminal, in the `inspection-station-mcp`
+folder:
 
 ```
-claude mcp add -s local --transport http inspection-server http://localhost:8000/mcp --header "Authorization: Bearer $(cat ~/.config/inspection-server/api-key)"
-claude
+cd server
+source .venv/bin/activate
+python scripts/try_tools.py
 ```
 
-Ask: "Take a photo of the inspection station. Is the tool tray complete?" Then: "Take
-another photo. Check that every tool is in the tray; it is part tray-02. Record the
-result." When Claude records a fail, Claude Code shows the server's question: "Accept" with
-the box ticked marks the part as failed, "Decline" marks it as unsure.
+#### With the desktop app
 
-**With the desktop app** instead: put your Claude API key into the file
-`~/.config/anthropic/api-key` (see [the app's README](client/README.md#your-claude-api-key)),
-then, in a second terminal, in the `inspection-station-mcp` folder:
+Put your Claude API key into the file `~/.config/anthropic/api-key` (see
+[the app's README](client/README.md#your-claude-api-key)), then, in a second terminal, in
+the `inspection-station-mcp` folder:
 
 ```
 cd client
@@ -80,19 +125,50 @@ pip install -e .
 inspection-client
 ```
 
-Ask the same questions in the window. The fail question comes up as a dialog with the photo.
-After the second question, the window looks like this: the camera's live view on the left;
-on the right the conversation, with Claude's closer look at the tray, the fail it recorded
-and your yes:
+Ask in the window: "Take a photo of the inspection station. Is the tool tray complete?"
+Then: "Take another photo. Check that every tool is in the tray; it is part tray-02.
+Record the result." The fail question comes up as a dialog with the photo. After the second
+question, the window looks like this: the camera's live view on the left; on the right the
+conversation, with Claude's closer look at the tray, the fail it recorded and your yes:
 
-![The desktop app. Left: the live view of the tool tray with its hammer missing. Right: the question, Claude's closer look at the tray, the fail recorded after the person's yes, and Claude's answer that the hammer is missing.](client/docs/app-main.png)
+![The desktop app. Left: the live view of the tool tray with its hammer missing. Right: Claude's closer look at the tray, the fail recorded after the person's yes, and Claude's answer that the hammer is missing.](client/docs/app-main.png)
 
-**Without any Claude access**, `python scripts/try_tools.py` in the `server` folder (with
-its environment active) plays the AI's part with fixed calls: a photo, a closer look and a
-proposed fail, which you confirm or not in the terminal.
+The screenshot was taken with only the tray's photo in the sample folder, so the live view
+shows the tray; with all the sample photos it shows the next one. Two of Claude's words in
+it are wrong: it counts the serrated table knife as one of the tray's tools, and nothing was
+"taken off the line": the demo only writes the record. The person's yes confirms the fail,
+not every word of the AI's findings, which stay in the log as the AI's own text.
 
-<details>
-<summary>The same on Windows, in PowerShell</summary>
+#### With Claude Code
+
+Why Claude Code at all, next to the desktop app: it is an AI application this project did
+not write, so it shows two things the app alone cannot. First, that the server is a plain
+MCP server: any application that speaks MCP connects to it without a change, which is the
+reason to use MCP rather than a private link between the server and its own app. Second,
+that the rules hold whoever connects: Claude Code too must bring a person's yes before a
+part is marked as failed, and with logins, a viewer is refused recording there too. It is
+also the cheaper way in if you have a Claude subscription but no API account: Claude Code
+runs on a paid Claude plan, while the app needs an API key, which is billed separately.
+
+In a second terminal, in the folder where you will use Claude Code (the server is
+registered for that folder only):
+
+```
+claude mcp add -s local --transport http inspection-server http://localhost:8000/mcp --header "Authorization: Bearer $(cat ~/.config/inspection-server/api-key)"
+claude
+```
+
+Ask the same questions (if you asked them in the app first, restart the server, so that the
+photos begin again with the complete tray). Claude Code first asks your permission to use
+each tool: that is Claude Code's own question. When Claude records a fail, Claude Code shows
+the server's question: tick the box "Mark this part as FAILED" and choose "Accept" to mark
+the part as failed; "Accept" without the tick, or "Decline", marks it as unsure. Claude Code
+shows the question as text, without the photo, so you are confirming the AI's description;
+the photo it judged is `captures/<photo ID>.jpg` in the `server` folder.
+
+### On Windows
+
+The same steps, in PowerShell; what to ask, and what you will see, are as above.
 
 ```
 git clone https://github.com/baharev/inspection-station-mcp.git
@@ -104,16 +180,23 @@ inspection-server --http
 ```
 
 If activating fails because running scripts is disabled, allow your own scripts once with
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. With Claude Code, in a second window:
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+#### Without any Claude access on Windows
+
+In a second window, in the `inspection-station-mcp` folder:
 
 ```
-claude mcp add -s local --transport http inspection-server http://localhost:8000/mcp --header "Authorization: Bearer $(Get-Content $HOME\.config\inspection-server\api-key)"
-claude
+cd server
+.venv\Scripts\Activate.ps1
+python scripts\try_tools.py
 ```
 
-With the desktop app, in a second window, in the `inspection-station-mcp` folder (the
-Claude API key goes into `$HOME\.config\anthropic\api-key`, see
-[the app's README](client/README.md#on-windows)):
+#### With the desktop app on Windows
+
+The Claude API key goes into `$HOME\.config\anthropic\api-key` (see
+[the app's README](client/README.md#on-windows)). Then, in a second window, in the
+`inspection-station-mcp` folder:
 
 ```
 cd client
@@ -123,12 +206,14 @@ pip install -e .
 inspection-client
 ```
 
-</details>
+#### With Claude Code on Windows
 
-Would you rather click than type? `inspection-server-window` opens a small window that
-starts and stops the server ([the server window](server/README.md#the-server-window)).
-Other setups, such as Claude Code starting the server by itself, the camera on another
-computer, or a login for each person, are in [Other ways to run it](#other-ways-to-run-it).
+In a second window, in the folder where you will use Claude Code:
+
+```
+claude mcp add -s local --transport http inspection-server http://localhost:8000/mcp --header "Authorization: Bearer $(Get-Content $HOME\.config\inspection-server\api-key)"
+claude
+```
 
 ## What an inspection station is
 
@@ -161,12 +246,6 @@ scrapped. The AI looks at the photo and decides pass, fail or unsure. A pass or 
 is written down straight away. A fail is not: wrongly scrapping a good part costs money,
 so the server asks a person first.
 
-In the figure above, the station computer is the one the camera is plugged into; the MCP
-server runs there and keeps the log. The operator's computer runs the desktop app, which
-talks to the server and to Claude; Claude Code can take the app's place. The two computers
-can also be one and the same, and the camera a USB webcam, or the fake camera, which serves
-stored photos instead.
-
 ## Why an AI is needed here
 
 A device with a fixed task (set a temperature, read a sensor) is better driven by an
@@ -174,11 +253,12 @@ ordinary script. A camera at an inspection station is different: the questions a
 and change from part to part. A script needs to be written and tuned for every question;
 the AI answers a new question about the same photo right away. It reads an analog gauge
 like a person does, notices a torn pack, or sees that the hammer is missing from a tool
-tray. It also checks whether what it reads makes sense, which a script that only copies
+tray. It can also check whether what it reads makes sense, which a script that only copies
 digits cannot do.
 
-The AI can also be confidently wrong, as the scale below shows. That is why the server
-lets it look closer at any part of a photo, and why a person confirms every fail.
+It does not always: the AI can also be confidently wrong, as the scale below shows. That
+is why the server lets it look closer at any part of a photo, and why a person confirms
+every fail.
 
 ## What the AI answered
 
@@ -188,9 +268,9 @@ about the scene. Each question was asked twice, in two separate sessions. The se
 the photo and zoom tools but not the recording tool, so that they could be repeated
 without filling the log; each answer's last paragraph, which says that it could not
 record the result, is left out. Otherwise the answers are not edited, only shortened:
-a cut is marked with a short summary in square brackets. A person checked every reading against the real objects. The photos are
-the sample photos in [`server/samples`](server/samples); brand names on the objects are
-erased.
+a cut is marked with a short summary in square brackets. I checked every reading against
+the real objects. The photos are the sample photos in [`server/samples`](server/samples);
+brand names on the objects are erased.
 
 ### The watch that is behind
 
@@ -217,7 +297,8 @@ show the same time, within one minute. Pass, fail or unsure for each watch?
 > hand is halfway between 1 and 2. The thin hand pointing at the 10 is the second hand (its
 > short tail points toward the 4), not the minute hand.
 
-Right: the left watch showed about 1:23 to 1:24, the others 1:30. The second session found the same.
+In fact, the left watch showed about 1:23 to 1:24, the others 1:30. The second session
+found the same.
 
 ### The tool tray, complete and not
 
@@ -248,14 +329,15 @@ The complete tray ([photo](server/samples/01-tray-complete.jpg)):
 Both sessions gave the same verdicts. But both took the serrated table knife, which lies
 in the slot for the hammer's handle, for one of the tray's own tools: the AI checked what
 the rule asked, slot by slot, and the knife sits in a slot. The verdict is still right,
-and a person looks at the tray before any fail is recorded. In the desktop app the same
-day, Claude Sonnet 5.5 did notice it, asked "Is the tool tray complete? Every slot must
-hold its tool" (one session, not one of the paired sessions above): "The hammer slot on
-the left is empty. A serrated knife lies across the hammer handle slot, and it doesn't
-belong in this tray." Opus noticed it too, in one of two later sessions in the app, asked to
-check the tray and record the result: "A serrated table knife (not part of the set) lies in
-the slot where the hammer handle goes." The same question can get a more or less thorough
-answer from one session to the next.
+and a person is asked before any fail is recorded.
+
+Other sessions, in the desktop app, did notice the knife. Claude Sonnet 5.5, asked "Is the
+tool tray complete? Every slot must hold its tool", answered: "The hammer slot on the left
+is empty. A serrated knife lies across the hammer handle slot, and it doesn't belong in
+this tray." Claude Opus 5.5, asked to check the tray and record the result, noticed it in
+one of two sessions: "A serrated table knife (not part of the set) lies in the slot where
+the hammer handle goes." The same question can get a more or less thorough answer from one
+session to the next.
 
 ### Damaged packs, and what the camera cannot see
 
@@ -342,7 +424,7 @@ lit ([photo](server/samples/05-scale-lit.jpg)), both sessions read 7.8 and passe
 another photo, not among the samples, where the unlit display was almost blank, both said
 unsure and gave no number: "I'd be guessing if I said 7.8."
 
-## Which model?
+## Choosing a model: Opus, Sonnet and Haiku compared
 
 The desktop app offers Claude Opus 5.5 (the default) and Claude Sonnet 5.5. On an earlier
 set of photos of the same scenes, Opus 5.5, Sonnet 5.5 and Haiku 5.5 were each asked nine
@@ -365,7 +447,7 @@ question is a small sample. Still, it shows why the model is a choice to make fo
 a cheap model can read an instrument well and still draw the wrong conclusion, and that is
 also why the rules live in the server, where no model can skip them.
 
-## The three tools, and the rules the server enforces
+## The tools the server provides, and the rules it enforces
 
 The server offers the AI three tools:
 
@@ -381,44 +463,61 @@ cannot see well enough; enlarging shows what the camera captured more clearly, b
 add detail it did not capture.
 
 Every rule is in the server's code (`server/inspection_server/server.py`), so it holds
-whatever the AI is told or tries:
+whatever the AI is told or tries through the tools:
 
 - **Inputs are checked.** Photo IDs, part labels, verdicts and the length of the findings
   must have the expected form; anything else is refused with a readable reason. A photo
   ID can never point to another file.
 - **Limits are in code.** The photo the AI is sent is capped at 1280×720 pixels; zoom
-  rectangles must lie inside the photo, and crops smaller than a tenth of it, which would
-  show only blur, are refused.
+  rectangles must lie inside the photo, and a crop less than a tenth of the photo's width
+  or height, which would show only blur, is refused.
 - **A person confirms a fail.** Before a fail is recorded, the server asks the person at
   the keyboard, through the part of MCP that lets a server ask the user a question
   (called elicitation). If they agree, the part is recorded as failed. If they say no,
   decline the question or close it, it is recorded as unsure, to be put aside for a person
-  to look at. The person has an hour to answer; an answer that comes later, or after the
+  to look at. With AI applications that use the protocol version 2026-07-28, such as the
+  desktop app, the person has an hour to answer; an answer that comes later, or after the
   server was restarted, records nothing, and the AI has to propose the fail again.
+  Applications of the older version are asked while the call waits, with no time limit set
+  by the server.
 - **One record per photo**, so the log never holds two verdicts for the same picture.
-- **Everything is logged**: every photo, closer look, record, refusal and fail question,
-  with the time and who called. See [The audit trail](#the-audit-trail).
+- **Logged**: every photo, closer look, record and fail question, and every request a rule
+  turns away (no key or login, a missing role, a zoom too small or outside the photo, a
+  second record for a photo), with the time and who called. A malformed input, such as a
+  photo ID that is not one, and a photo that does not exist are refused too, but leave no
+  line in the log. See [The audit trail](#the-audit-trail).
 - **Over the network, nobody gets in without a key or a login**, and a login's roles
-  decide which tools its user may call: a viewer may take photos, look closer and watch the
-  live view; an inspector may also record results. The server checks this at every call.
-  The one exception: the live view needs no key on the station computer itself.
+  decide which tools its user may call: the role `viewer` allows photos, closer looks and
+  the live view, the role `inspector` allows recording. The server checks the roles at
+  every call, each on its own, so an inspector needs both, as the demo's user `inspector`
+  has. The one exception: the live view needs no key on the station computer itself.
 
 Tool annotations such as "read-only" are also set, but they are only hints for the AI
 application, not protection.
 
 ## What the server can and cannot guarantee
 
-The rules above hold whatever the AI does. A few things, though, are left to the programs
-around the server, or are left open on purpose:
+The rules above hold whatever the AI does through the tools. A few things, though, are left
+to the programs around the server, or are left open on purpose:
 
-- **Guaranteed: the AI cannot give the person's yes itself.** It can only call the three
-  tools, with inputs the server checks. The answer to the fail question is not part of the
-  tool's input: the server asks the AI application for it directly.
+- **Guaranteed: the AI cannot give the person's yes through the three tools.** The answer
+  to the fail question is not part of any tool's input: it comes back from the AI
+  application, sealed to that exact question, part and user.
 - **Not guaranteed: that a person, not a script, said yes.** The server relies on the AI
   application (the desktop app, or Claude Code) to show its question to a person and pass
   the answer on. Anyone with the secret key could write a program that says yes; logins
   narrow that down to named people with the inspector role.
-- **Not checked by the app: the server's own words.** The desktop app hands the server's
+- **Not guaranteed: that the AI has no other way in.** In the desktop app, Claude has only
+  the three tools. Claude Code can also run commands on its computer: with the key at
+  hand, it could call the server like any other program and answer the question itself.
+  What stops it then is Claude Code's own permission prompt for commands, not the server.
+  Where that matters, use the desktop app; a stronger design would have the server collect
+  the yes itself, for example on a page the logged-in inspector opens in the browser.
+- **Not checked: one verdict per part.** The part's label is whatever the AI types, and a
+  part can be photographed again: a confirmed fail for `tray-02` can be followed by a pass
+  for `tray-02` on another photo, recorded without asking anyone. In a plant the label
+  comes from the line, and a part that failed or is unsure waits for a person's decision.
+- **Trusted, not checked: what the server tells Claude.** The desktop app hands the server's
   instructions and tool descriptions to Claude as they are, so the server itself must be
   one you trust. The app answers only a question with the one yes-or-no field it expects,
   and declines any other.
@@ -437,9 +536,10 @@ so it holds whatever AI or app is connected. It keeps two files in its `logs/` f
 `audit.log`, one line per event, and `inspections.jsonl`, one record per part inspected.
 
 Here is part of `audit.log` from a real session with the desktop app and two logins, run
-on one computer with the sample photos (some lines are left out: more closer looks, the
-live view, and one of the stranger's kind for each start of the app, whose first request
-goes out before the login):
+on one computer with the sample photos. Some lines are left out: the later parts' photos
+and closer looks, the fail question for the watches, the live view, and two more refused
+requests like the first line. The app makes one at each start: its first request goes out
+without a login, and the refusal tells it where to log in.
 
 ```
 2026-10-18T20:41:36+02:00 unknown REFUSED /mcp from 127.0.0.1: no key or login token sent
@@ -456,8 +556,9 @@ goes out before the login):
 
 Line by line:
 
-1. Someone sent a request without a key or a login, and was turned away before reaching
-   any tool. Who it was is unknown; the address it came from is kept.
+1. A request without a key or a login, turned away before it reached any tool. It was
+   sent on purpose, with `curl`, to show how a stranger's request looks. The server cannot
+   know who sent it; it keeps the address it came from.
 2. The AI, using the login of `viewer`, took a photo (the complete tool tray). The line
    holds the photo's size and its fingerprint.
 3. It looked closer at a rectangle of that photo, given in the photo's pixels.
@@ -522,20 +623,21 @@ The limits, plainly:
   can change them unnoticed.
 - With the shared secret key, every line says `api-key`: one key, no names. Logins give
   names. When Claude Code starts the server by itself on one computer, every line says
-  `local`.
+  `local`. Two exceptions: the live view opened on the station computer itself, which
+  needs no key, is logged as `local`, and a refused request as `unknown`.
 - The question the operator asked and the model that answered are known only to the app
   or to Claude Code, not to the server.
 
 ## Other ways to run it
 
-The quick start uses the easiest way: the server's secret key, all on one computer. The
-others, from the easiest:
+The quick start uses the way that serves both Claude Code and the app, with the live view:
+the server's secret key, all on one computer. All the ways, from the easiest:
 
 | Your situation | How | Steps |
 |---|---|---|
 | Claude Code on one computer, nothing else to start | Claude Code starts the server by itself, in the background; no key, no live view | [Server README](server/README.md#claude-code-starts-the-server) |
 | One computer, with the live view in a browser | The quick start: you start the server, Claude Code or the app connects with the key | [Server README](server/README.md#the-server-and-claude-code-on-one-computer), [app README](client/README.md#try-it-on-one-computer) |
-| The camera on one computer, Claude Code or the app on another | The same, plus a copy of the key file on the other computer, and HTTPS if the network is not trusted | [Server README](server/README.md#the-camera-on-one-computer-claude-code-on-another), [app README](client/README.md#the-camera-on-another-computer) |
+| Two computers, for example two laptops on your home network: the server and the camera on one, the desktop app or Claude Code on the other | The same, plus a copy of the key file on the other computer, and HTTPS if the network is not trusted | [Server README](server/README.md#the-camera-on-one-computer-claude-code-on-another), [app README](client/README.md#the-camera-on-another-computer) |
 | A login for each person, with roles | A demo login server (Keycloak, in a container), the server with logins, then Claude Code or the app | [Server README](server/README.md#logins-with-roles), [app README](client/README.md#logins-with-roles) |
 
 The live view is a page in the browser that shows what the camera sees, as it happens, for
@@ -543,31 +645,53 @@ setting up a scene: `http://localhost:8000/live` while the server runs over HTTP
 
 To use a real camera, choose it instead of the sample photos when the server asks; any
 webcam the computer can use will do. The server never picks a camera by itself
-([choosing a camera](server/README.md#choosing-a-camera)). Tested on Linux and Windows,
-with Python 3.14 and 3.13; macOS is not tested.
+([choosing a camera](server/README.md#choosing-a-camera)). Tested on Linux and Windows;
+never tested on macOS, though it should work there too.
 
 ## From this demo to a plant
 
-The demo runs on one computer and talks to one device. In a plant, the same pattern
-grows roughly like this:
+The demo runs on one computer and talks to one device. A plant would build out the same
+pattern like this.
 
-- **Existing systems behind their own servers.** One MCP server per system (a machine's
-  OPC UA interface, a test bench, a manufacturing execution system, an in-house REST API),
-  each offering a few well-chosen tools built on the system's existing interface, not
-  every endpoint it has.
-- **Over the network, with logins.** The servers run on the plant network over MCP's HTTP
-  transport with logins, so it is known which person and which application called what;
-  starting a server on one computer is for development. This demo shows the pattern with
-  a demo login server; a plant would use its existing one (for example Microsoft Entra ID
-  or Keycloak) and its own certificates.
-- **Read first, write later.** Tools that only read come first; tools that change anything
-  are added one at a time, each with its rules in the server and a person's yes where a
-  mistake costs money.
-- **Rules and logs stay in the servers**, so they hold whatever AI application or model is
-  connected. A plant writes the records into its own database, for example its
-  manufacturing execution system, with its own protected history, not into text files.
-- **Tested like any software**, against fakes of the real systems, as the tests here run
-  against the fake camera.
+Each existing system gets its own MCP server: a machine's OPC UA interface, a test bench, a
+manufacturing execution system (MES), an in-house REST API. Each server offers a few
+well-chosen tools built on the system's existing interface, not every endpoint it has. For
+this demo's job, an industrial camera or a vision system would replace the webcam: only the
+camera code changes, and the tools, the rules and the log stay as they are.
+
+The servers run on the plant network, over MCP's HTTP transport, with logins, so it is
+known which person and which application called what; starting a server on one computer is
+for development. A plant would use its existing login server (for example Microsoft Entra
+ID or Keycloak) and its own certificates instead of the demo's. The AI application runs in
+the office network: only the MCP servers reach into the production network, through its
+firewall, and no computer connects the machines straight to the internet (the figure above
+leaves this out). The photos go to the AI provider, which is a question for the plant's
+data protection officer and, where there is one, its works council, since a camera can
+catch people. When the internet or the AI service is down, people do the inspection.
+
+Tools that only read come first. Tools that change anything are added one at a time, each
+with its rules in the server, and a person's yes where a mistake costs money. A yes in a
+dialog is never a safety function: a machine's safety interlocks stay in its own
+controller.
+
+The rules and the logs stay in the servers, so they hold whatever AI application or model
+is connected. A plant writes the records into its own database, for example the MES, with
+its own protected history, not into text files; and the part's label comes from the line,
+for example from a scanner, not from the AI.
+
+Before the AI is trusted with a check, it is tried on parts whose answers are known, good
+and bad, to measure how often it passes a bad part and fails a good one. The model's
+version is fixed; a new model, new instructions, a new camera or new lighting mean
+measuring again. Each record then also names the model and the version of the rule it was
+checked against, which this demo's server does not know.
+
+An answer takes about half a minute, so this suits the checks that fixed camera software
+cannot do and that the line can wait for: setting up a new product, the first part of a
+batch, spot checks, a daily check like the scale. At full line speed, trained machine
+vision does the routine checks.
+
+The servers are tested like any software, against fakes of the real systems, as the tests
+here run against the fake camera.
 
 ## Reading the code
 
@@ -597,12 +721,17 @@ The server speaks MCP protocol version 2026-07-28, which keeps no session: there
 server's question for the person comes back as the tool call's result, with the server's
 state sealed inside it, and the call is sent again with the answer. It also serves clients
 of the older version 2025-11-25, which keeps a session and asks during the call. The app's
-"Show MCP messages" checkbox shows the messages as they really went.
+"Show MCP messages" checkbox shows the messages' contents as the app sent and received
+them, with the pictures and the sealed state shortened.
 
 The tests were tested too: bugs were planted in the code by hand, one at a time, each
 breaking a rule the way a developer could really get it wrong, and each gap they found got
 a test. See [the server's](server/docs/test-quality.md) and
-[the app's](client/docs/test-quality.md) record of it.
+[the app's](client/docs/test-quality.md) record of it. There are about as many lines of
+tests as of code: the server's 1,207 lines of code have 1,192 lines of tests (0.99 lines of
+tests per line of code), and the app's 927 lines have 870 (0.94). These count only lines
+with code on them: no blank lines, comments or docstrings, and not the two scripts in
+`server/scripts`.
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 2.3.0, the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python) and
@@ -620,7 +749,3 @@ Two separate programs, each installed on its own, with its own tests:
   against a stand-in server, so the server could be rewritten in another language without
   changing the app.
 - `docs/setup.svg`: the figure above.
-
-## License
-
-MIT, see [LICENSE](LICENSE).

@@ -1,8 +1,8 @@
 """An inspection station behind MCP: the AI takes photos, looks closer, records results.
 
 The rules live here, not in the prompt: the photo the AI is sent is capped in size (the
-full photo is kept for zooming), every input is checked,
-a "fail" (the part is taken off the line) needs a person's yes, and everything is audit-logged.
+full photo is kept for zooming), every input is checked, a "fail" (in a real plant, the
+part would be taken off the line) needs a person's yes, and everything is audit-logged.
 Over the network, every request needs a secret key or a login, and a login's roles
 decide which tools its user may call.
 
@@ -471,9 +471,10 @@ def create_server(camera, data_dir: str | Path = SERVER_DIR, *, auth: AuthSettin
     ) -> InspectionRecord:
         """Add the result of an inspection to the log: one record per photo.
 
-        Verdict pass, fail or unsure. A fail takes the part off the line, so a person must
-        confirm it first; without their yes the part is recorded as unsure and put aside
-        for a person to look at.
+        Verdict pass, fail or unsure. In a real plant a fail would take the part off the
+        line, so a person must confirm it first; without their yes the part is recorded as
+        unsure and put aside for a person to look at. Recording moves nothing: the record
+        is all that happens.
         """
         require(INSPECTOR, "record_inspection")
         check_record(image_id)

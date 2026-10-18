@@ -25,7 +25,7 @@ app's rules, not made by a tool that changes code at random ("mutation testing")
 | Caught, but the message did not say what went wrong | 1 |
 
 Now all 12 are caught, each by a test that names the rule. The check found no bug in the
-app's code itself, but it showed one rule that was too loose; see the next paragraph.
+app's code itself, but it showed one rule that was too loose; see the paragraph after the next.
 
 The main lesson: the tests covered the main path well, but each one tried a single case.
 Every question in them was a plain yes or no, every conversation had one photo, and the
@@ -37,7 +37,7 @@ the address and the trusted certificates on to its parts. Both have tests now, c
 same way with 19 more planted bugs (41 to 59, in the second table). Along the way one rule
 was tightened in the code: the app answered any server question with a single field using
 its Yes/No dialog, even a question asking for text; it now turns down every question that
-is not a plain yes or no (bug 41). The tests went from 21 to 41.
+is not a plain yes or no (bug 41). The tests went from 21 to 41 (more were added since, for later changes).
 
 The inspection server in the folder `server` was checked the same
 way, with 28 bugs; its results are in [`server/docs/test-quality.md`](../../server/docs/test-quality.md).
@@ -97,7 +97,7 @@ its test fail.
 29. `station.py`: `content={CONFIRM_FIELD: said})` → `content={CONFIRM_FIELD: True})`; second form, `app.py`: `{1: True, 2: False}.get(...)` → `{1: True, 2: True}.get(...)`
 30. `station.py`: `return ElicitResult(action="cancel")` → `return ElicitResult(action="decline")`
 31. `station.py`: `if (list(properties) != [CONFIRM_FIELD]` and its two lines → deleted
-32. `station.py`: `Question(params.message, self.photos.get(image_id))` → `Question(params.message, next(iter(self.photos.values()), None))`; second form: the latest photo
+32. `station.py`: `Question(params.message, self.photos.get(self.running.get("image_id")))` → `Question(params.message, next(iter(self.photos.values()), None))`; second form: the latest photo
 33. `app.py`: `no.setDefault(True)` → `yes.setDefault(True)`; second form: the line turning off `setAutoDefault` → deleted
 34. `login.py`: `RENEW_EARLY = 30` → `RENEW_EARLY = 0`; second form: `- RENEW_EARLY` → deleted
 35. `login.py`: `validate_resource_url=self.same_address` → deleted; second form: `if published and ...` → `if False and published and ...`

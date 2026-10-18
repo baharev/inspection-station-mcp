@@ -28,11 +28,10 @@ quick start, the AI's answers, the rules and the audit trail are in the
 
 ## Installing
 
-Python 3.13 or later: tested with 3.14 on Linux and Windows; the tests also pass with
-3.13. macOS is not tested yet: the camera code for it follows the documentation of the
-libraries it uses, but has not run on a Mac. The commands in this README are for Linux,
-and should work the same in the macOS Terminal; for PowerShell, see
-[On Windows](#on-windows).
+Python 3.13+. It has never been tested on macOS; it should work there too, since the
+camera code for it follows the documentation of the libraries it uses. The commands in
+this README are for Linux, and should work the same in the macOS Terminal; for
+PowerShell, see [On Windows](#on-windows).
 
 In a terminal, in the `server` folder:
 
@@ -71,7 +70,7 @@ check them: [The audit trail](../README.md#the-audit-trail) in the main README.
 | Each person logs in, with a role | You, with a login server | [Logins with roles](#logins-with-roles) |
 
 The desktop app in the folder [`client`](../client/README.md) needs the server started by
-you, over HTTP, as in the second to the last row; the app's README has its own steps.
+you, over HTTP, as in every row but the first; the app's README has its own steps.
 
 The server never picks a camera by itself. The first time you start it in a terminal, it
 lists the cameras it finds and asks you to type the number of one. The last entry needs
@@ -99,8 +98,9 @@ only (`-s local`); it is needed once. The second starts Claude Code. Type `/mcp`
 Claude Code: it should show `inspection-server` as connected. Then ask, for example:
 "Take a photo of the inspection station. Is the tool tray complete?" When Claude records
 a fail, Claude Code shows the server's question in the terminal, with the box "Mark this
-part as FAILED?" and the choices "Accept" and "Decline": "Accept" with the box ticked
-marks the part as failed; "Decline" marks it as unsure.
+part as FAILED" and the choices "Accept" and "Decline": "Accept" with the box ticked
+marks the part as failed; "Accept" without the tick, or "Decline", marks it as
+unsure.
 
 With a real camera, choose it and its photo size once, in a terminal with the
 environment active (see [Choosing a camera](#choosing-a-camera)):
@@ -286,8 +286,9 @@ the algorithm "none", someone else's key or login server, a token for another se
 claims edited after signing, and more): all refused. `scripts/keycloak.sh` starts a demo login server
 ([Keycloak](https://www.keycloak.org/), in a container; needs
 [podman](https://podman.io/)) with two users: `inspector` (password `inspector`; may
-record results) and `viewer` (password `viewer`; may only take photos, look closer and
-watch the live view). Claude Code is registered there in advance, as an administrator
+record results, and has the role `viewer` too, since the server checks each role on its
+own) and `viewer` (password `viewer`; may only take photos, look closer and watch the
+live view). Claude Code is registered there in advance, as an administrator
 would register each application that may connect, and so is the desktop app (its steps:
 [Logins with roles](../client/README.md#logins-with-roles) in its README).
 
@@ -451,9 +452,9 @@ press Ctrl+C and start again.
 The choice is saved in `~/.config/inspection-server/settings.json` (on Windows
 `$HOME\.config\inspection-server\settings.json`) as the camera's path on Linux, or its
 name on Windows and macOS (its device path, for two cameras of the same model). Never as
-its number in the list: numbers change when devices are plugged in. Every start shows
-which camera it uses. If the chosen camera is not there, the server stops at once and
-says so; it never takes another one instead. Where nobody can answer the list, as when
+its number in the list: numbers change when devices are plugged in. Every start over
+HTTP shows which camera it uses. If the chosen camera is not there, the server stops at
+once and says so; it never takes another one instead. Where nobody can answer the list, as when
 Claude Code starts the server and no camera has been chosen yet, the server stops and
 says why.
 
@@ -681,7 +682,8 @@ The tests were tested too: 28 bugs were planted in the code by hand, one at a ti
 breaking one of the server's rules the way a developer could really get it wrong (a fail
 recorded without a person's yes, a thin crop let through, an expired login accepted, a
 near-miss key let in, and so on). At first, 11 were caught by a test that failed for the
-right reason with a clear message, and 9 got through with every test still passing. Each
+right reason with a clear message, and 9 got through with every test still passing; the other 8 were caught, but for the
+wrong reason, with an unclear message, or by a test that reached out to the network. Each
 gap now has a test, and all 28 are caught. The bugs, grouped by the rule they break, and
 what each one showed: [docs/test-quality.md](docs/test-quality.md). The app's tests were
 checked the same way.
@@ -714,7 +716,3 @@ checked the same way.
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk),
 version 2.3.0.
-
-## License
-
-MIT, see [LICENSE](../LICENSE).

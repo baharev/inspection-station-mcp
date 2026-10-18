@@ -24,7 +24,7 @@ rules, not made by a tool that changes code at random ("mutation testing").
 | Caught, but the message did not say what went wrong | 4 |
 | Caught, but the test reached out to the network | 1 |
 
-Now all 28 are caught, each by a test that names the rule. The tests went from 132 to 140.
+Now all 28 are caught, each by a test that names the rule. The tests went from 132 to 140 (more were added since, for later changes).
 The check found no bug in the server's code itself: every rule held.
 
 Two lessons stand out. Tests that only checked "an error came back" passed for the wrong
@@ -129,8 +129,8 @@ In `inspection_server/server.py` unless named otherwise.
 23. In `live_frame`, `("authorization" in request.headers or not from_this_computer(request))` → `not from_this_computer(request)`
 24. In `live_frame`, the same condition → `"authorization" in request.headers`; second form, in `from_this_computer`: `return name in ("localhost", "127.0.0.1", "::1")`
 25. `camera.py`: `if (frame.shape[1], frame.shape[0]) != self.size:` → `if frame.shape[1] != self.size[0]:`; second form: `if False:`
-26. In `main`, the stop with "The camera chosen earlier ... cannot be found" → a warning, then `camera = FakeCamera(...)`; second form, `camera.py`: the first camera listed taken when none matches
-27. `choice.py`, `for_start`: under `if not can_ask:`, `return Choice(FAKE, SAMPLE_PHOTOS, "nobody to choose a camera")` before the stop
+26. In `open_camera`, the stop with "The camera chosen earlier ... cannot be found" → a warning, then `camera = FakeCamera(...)`; second form, `camera.py`: the first camera listed taken when none matches
+27. `choice.py`, `from_menus`: under the second `if not can_ask:`, `return Choice(FAKE, SAMPLE_PHOTOS, "nobody to choose a camera")` before the stop
 28. `choice.py`, at the start of `ask`: `if len(entries) == 2: return entries[0]`
 
 </details>
