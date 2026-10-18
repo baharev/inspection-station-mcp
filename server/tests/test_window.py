@@ -6,13 +6,13 @@ on a computer without a screen.
 
 import pytest
 
-from inspection_camera import choice, window
+from inspection_server import choice, window
 
 C270 = ("/dev/v4l/by-id/usb-046d_0825_1-video-index0", "Logitech Webcam C270 (plugged in)")
 
 
 def test_start_runs_the_server_over_http_for_this_computer_or_for_others_too():
-    assert window.server_command(False)[-4:] == ["inspection_camera.server", "--http",
+    assert window.server_command(False)[-4:] == ["inspection_server.server", "--http",
                                                   "--port", "8000"]
     assert window.server_command(True)[-2:] == ["--host", "0.0.0.0"]
 
@@ -41,8 +41,8 @@ def test_the_key_copied_is_the_one_the_server_takes(tmp_path, monkeypatch):
 
 
 def test_the_linux_launcher_quotes_paths_with_spaces():
-    entry = window.desktop_entry(["/home/a b/env/bin/python", "-m", "inspection_camera.window"])
-    assert 'Exec="/home/a b/env/bin/python" -m inspection_camera.window\n' in entry
+    entry = window.desktop_entry(["/home/a b/env/bin/python", "-m", "inspection_server.window"])
+    assert 'Exec="/home/a b/env/bin/python" -m inspection_server.window\n' in entry
     assert "Exec=/opt/env/bin/inspection-server-window\n" in window.desktop_entry(
         ["/opt/env/bin/inspection-server-window"])
 
@@ -56,10 +56,10 @@ def screen(monkeypatch):
     except tk.TclError as err:
         pytest.skip(f"no screen ({err})")
     found = [C270]
-    monkeypatch.setattr("inspection_camera.choice.list_cameras", lambda: found)
-    monkeypatch.setattr("inspection_camera.window.camera_sizes",
+    monkeypatch.setattr("inspection_server.choice.list_cameras", lambda: found)
+    monkeypatch.setattr("inspection_server.window.camera_sizes",
                         lambda device: [(1280, 960), (1280, 720), (640, 480)])
-    monkeypatch.setattr("inspection_camera.choice.sys.platform", "linux")
+    monkeypatch.setattr("inspection_server.choice.sys.platform", "linux")
     yield root, found
     root.destroy()
 

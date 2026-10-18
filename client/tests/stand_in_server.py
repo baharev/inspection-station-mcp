@@ -3,7 +3,7 @@
 The app depends only on what any camera server offers over MCP: the tool names and
 arguments, a photo's ID in the text "Photo <ID> ...", a refusal as a tool error, and a
 yes-or-no question before a fail is recorded. So the tests need neither the real server
-(repository mcp-server) nor a camera. What the stand-in got is kept in `answers`.
+(repository inspection-mcp-server) nor a camera. What the stand-in got is kept in `answers`.
 """
 
 import io

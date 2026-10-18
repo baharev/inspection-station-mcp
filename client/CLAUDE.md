@@ -1,15 +1,15 @@
-# MCP inspection camera: the desktop app
+# Inspection MCP client: the desktop app
 
 An MCP server (Model Context Protocol, the standard way to plug tools, data and devices
 into an AI application such as Claude Code) lets the AI take photos with a camera, look
 closer at part of a photo, and record inspection results. The server, with its demo
-login server and certificate script, is in a repository of its own, `mcp-server`. This
+login server and certificate script, is in a repository of its own, `inspection-mcp-server`. This
 repository holds a desktop app (PySide6) that uses it. Claude Code connects to the
 server directly, as the server's README shows; nothing for it lives here.
 
 ## What is here
 
-- `inspection_station/`: the desktop app (command `inspection-station`). `station.py`
+- `inspection_client/`: the desktop app (command `inspection-client`). `station.py`
   runs the loop between Claude (Anthropic Python SDK, `AsyncAnthropic`) and the camera
   server (MCP `Client` over HTTP with the server's key); `app.py` is the window, which
   runs the station in a background thread with its own asyncio loop and gets each step

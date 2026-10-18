@@ -14,7 +14,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p certs && cd certs
 trap 'rm -f ca.key ca.srl server.csr' EXIT   # also if a step fails
-openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=Inspection camera demo CA" \
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=Inspection server demo CA" \
     -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
     -keyout ca.key -out ca.pem 2>/dev/null
 names="DNS:localhost,IP:127.0.0.1"

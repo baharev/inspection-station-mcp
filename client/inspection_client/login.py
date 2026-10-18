@@ -5,7 +5,7 @@ OAuthClientProvider finds it, sends the person to its login page, exchanges the 
 for a token, sends the token with every request, and renews it before it runs out. This
 module adds what the SDK leaves to the application: opening the browser, receiving the
 login server's answer on this computer, and keeping the token. The app is registered at
-the login server in advance, as the client "inspection-station" (the demo login server in
+the login server in advance, as the client "inspection-client" (the demo login server in
 the camera server's repository has it), the way an administrator registers each
 application that may connect; nothing is registered automatically.
 
@@ -24,13 +24,13 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider, TokenStorage
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 
-CLIENT_ID = "inspection-station"
+CLIENT_ID = "inspection-client"
 CALLBACK_PORT = 33419   # the login server sends the browser back here, to this computer
 CALLBACK = f"http://localhost:{CALLBACK_PORT}/callback"
 WAIT = 300              # seconds the app waits for the login in the browser
 RENEW_EARLY = 30        # seconds before a token runs out that the app renews it
 
-PAGE = """<!doctype html><meta charset="utf-8"><title>Inspection station</title>
+PAGE = """<!doctype html><meta charset="utf-8"><title>Inspection client</title>
 <body style="font: 16px sans-serif; margin: 3em"><p>{}</p></body>"""
 
 
@@ -61,7 +61,7 @@ class BrowserLogin(TokenStorage):
         self.listener = None    # where the browser brings it
         self.auth = OAuthClientProvider(
             server_url,
-            OAuthClientMetadata(client_name="Inspection station", redirect_uris=[CALLBACK],
+            OAuthClientMetadata(client_name="Inspection client", redirect_uris=[CALLBACK],
                                 token_endpoint_auth_method="none"),
             self, redirect_handler=self.open_login_page, callback_handler=self.wait_for_login,
             validate_resource_url=self.same_address)
@@ -161,7 +161,7 @@ class BrowserLogin(TokenStorage):
             if "code" in answer:
                 self.answer.set_result(AuthorizationCodeResult(
                     code=answer["code"], state=answer.get("state"), iss=answer.get("iss")))
-                text = "Logged in. You can close this tab and go back to the inspection station."
+                text = "Logged in. You can close this tab and go back to the app."
             else:
                 why = answer.get("error_description") or answer.get("error") or "no answer"
                 self.answer.set_exception(LoginFailed(f"the login server said: {why}"))

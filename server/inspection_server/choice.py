@@ -14,13 +14,13 @@ import os
 import sys
 from pathlib import Path
 
-from inspection_camera.camera import (CameraError, camera_sizes, list_cameras, parse_size,
+from inspection_server.camera import (CameraError, camera_sizes, list_cameras, parse_size,
                                       size_text, suggested_size)
 
-SETTINGS_FILE = Path.home() / ".config" / "inspection-camera" / "settings.json"
+SETTINGS_FILE = Path.home() / ".config" / "inspection-server" / "settings.json"
 FAKE = "fake"
 SAMPLE_PHOTOS = "Sample photos, no camera (the fake camera)"
-CHOOSE = "inspection-camera --choose-camera"
+CHOOSE = "inspection-server --choose-camera"
 FROM_CAMERA = "set by CAMERA"
 
 

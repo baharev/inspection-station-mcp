@@ -2,7 +2,7 @@
 
     inspection-server-window
 
-The window runs the command a person would type, inspection-camera --http, as a separate
+The window runs the command a person would type, inspection-server --http, as a separate
 program, and shows what it says; Stop ends that program. So the server is the same with
 or without the window, and a computer without a screen never needs the window. Its
 choices go into the same settings file as the terminal's (choice.py): the camera, the
@@ -28,12 +28,12 @@ except ImportError:   # Linux distributions ship it separately
     sys.exit("This Python has no Tkinter, which the window needs. On Ubuntu and Debian: "
              "sudo apt install python3-tk")
 
-from inspection_camera import choice as camera_choice
-from inspection_camera.camera import CameraError, camera_sizes, size_text, suggested_size
+from inspection_server import choice as camera_choice
+from inspection_server.camera import CameraError, camera_sizes, size_text, suggested_size
 
 PORT = 8000
 # The same file as in server.py, which is not imported here: it would load the whole server.
-KEY_FILE = Path.home() / ".config" / "inspection-camera" / "api-key"
+KEY_FILE = Path.home() / ".config" / "inspection-server" / "api-key"
 OTHER_COMPUTERS = "other_computers"   # the checkbox, as kept in the settings file
 NAME = "inspection-server-window"
 TITLE = "Inspection server"
@@ -43,7 +43,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 def server_command(other_computers: bool) -> list[str]:
     """What Start runs: the server over HTTP, with the Python this window runs on."""
-    command = [sys.executable, "-u", "-m", "inspection_camera.server", "--http",
+    command = [sys.executable, "-u", "-m", "inspection_server.server", "--http",
                "--port", str(PORT)]
     return command + (["--host", "0.0.0.0"] if other_computers else [])
 
@@ -75,7 +75,7 @@ def window_program() -> list[str]:
     python = Path(sys.executable)
     if sys.platform == "win32" and python.with_name("pythonw.exe").exists():
         python = python.with_name("pythonw.exe")   # no console window
-    return [str(python), "-m", "inspection_camera.window"]
+    return [str(python), "-m", "inspection_server.window"]
 
 
 def desktop_entry(program: list[str]) -> str:

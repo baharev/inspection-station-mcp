@@ -1,9 +1,9 @@
 """The window: the camera's live view on the left, the conversation with Claude on the right.
 
-    inspection-station [--server http://<station computer>:8000/mcp] [--login] [--trust ca.pem]
+    inspection-client [--server http://<station computer>:8000/mcp] [--login] [--trust ca.pem]
 
 The camera server must be running with --http. Keys are read from files, never typed:
-the camera server's key from ~/.config/inspection-camera/api-key (or API_KEY), Claude's
+the camera server's key from ~/.config/inspection-server/api-key (or API_KEY), Claude's
 from ~/.config/anthropic/api-key (or ANTHROPIC_API_KEY). With --login, the person logs
 in through the camera server's login server in the browser instead, and the camera
 server's key is not needed.
@@ -231,7 +231,7 @@ class Window(QMainWindow):
         self.after_mcp = False   # the last thing shown is an MCP message, with its line below
         self.conversation_cost = 0.0
         self.started = 0.0
-        self.setWindowTitle("Inspection station")
+        self.setWindowTitle("Inspection client")
 
         self.conversation = QTextBrowser()
         self.conversation.setOpenLinks(False)
@@ -556,7 +556,7 @@ def main() -> None:
     live = lambda show, tell: live_view(live_url(args.server), auth, show, tell, verify, ready)
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Inspection station")
+    app.setApplicationName("Inspection client")
     worker = Worker(station, login.who if login else lambda: "")
     if login:
         login.tell = worker.note.emit

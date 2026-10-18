@@ -11,13 +11,13 @@ from urllib.parse import parse_qs, urlsplit
 import httpx2
 import pytest
 
-from inspection_station import login as login_module
-from inspection_station.login import CALLBACK, RENEW_EARLY, BrowserLogin, LoginFailed
-from inspection_station.station import CameraServerRefused, describe
+from inspection_client import login as login_module
+from inspection_client.login import CALLBACK, RENEW_EARLY, BrowserLogin, LoginFailed
+from inspection_client.station import CameraServerRefused, describe
 
 pytestmark = pytest.mark.anyio
 
-LOGIN_PAGE = ("http://login.example/auth?response_type=code&client_id=inspection-station"
+LOGIN_PAGE = ("http://login.example/auth?response_type=code&client_id=inspection-client"
               "&state=s1&scope=openid+offline_access&prompt=consent")
 
 
@@ -50,7 +50,7 @@ async def test_the_browser_brings_back_the_answer():
     # no scopes asked for, and the login form every time
     asked = parse_qs(urlsplit(opened[0]).query)
     assert "scope" not in asked and asked["prompt"] == ["login"]
-    assert asked["client_id"] == ["inspection-station"]
+    assert asked["client_id"] == ["inspection-client"]
     assert told == ["Log in in the browser window that opened."]
 
 

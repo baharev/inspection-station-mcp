@@ -9,8 +9,8 @@ from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton
 
-from inspection_station.app import ConfirmDialog
-from inspection_station.station import Question
+from inspection_client.app import ConfirmDialog
+from inspection_client.station import Question
 
 app = QApplication.instance() or QApplication([])
 

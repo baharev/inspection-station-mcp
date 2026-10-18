@@ -1,4 +1,4 @@
-# MCP inspection camera: the server
+# Inspection MCP server
 
 An MCP server (Model Context Protocol, the standard way to plug tools, data and devices
 into an AI application such as Claude Code) that lets the AI take photos with a camera,
@@ -6,7 +6,7 @@ look closer at part of a photo, and record inspection results. The safety rules 
 enforced in the server, not in the prompt. This repository holds the server, with its
 demo login server and a script for HTTPS certificates. Claude Code connects to it
 directly (the README shows how); the desktop app that uses it is in a repository of its
-own, `mcp-client`, and never imports this code.
+own, `inspection-mcp-client`, and never imports this code.
 
 ## Environment
 
@@ -17,7 +17,7 @@ own, `mcp-client`, and never imports this code.
 - The fake camera (`CAMERA=fake`, or "Sample photos" in the camera list) serves the
   photos in `samples/`; the tests draw their own. The camera is always chosen by a
   person, never guessed: by its number in a list the server shows in a terminal
-  (`choice.py`; saved in `~/.config/inspection-camera/settings.json`, changed with
+  (`choice.py`; saved in `~/.config/inspection-server/settings.json`, changed with
   `--choose-camera`), or with `CAMERA`, which comes first. What is saved is the camera's
   name or path, never the number (numbers change when devices are plugged in): on Linux
   a V4L2 webcam by its stable `/dev/v4l/by-id/` path; on Windows (through DirectShow) and
@@ -27,8 +27,8 @@ own, `mcp-client`, and never imports this code.
 - The server alone opens the camera: a background thread reads frames while photos or the
   live view (`/live`, with `--http`) are used, and releases the camera a minute later.
   Meanwhile no other program can open it; the live view replaces separate camera viewers.
-- The server window (`inspection-server-window`, `inspection_camera/window.py`) runs
-  `inspection-camera --http` as a separate program and shows its output; Stop ends it.
+- The server window (`inspection-server-window`, `inspection_server/window.py`) runs
+  `inspection-server --http` as a separate program and shows its output; Stop ends it.
   Tkinter is imported only there: the server never depends on the window, and a computer
   without a screen never needs it. Its choices live in the same settings file.
 - Containers: podman (the demo login server, `scripts/keycloak.sh`).
@@ -45,7 +45,7 @@ own, `mcp-client`, and never imports this code.
 - Never `print()` in a stdio server: stdout carries the protocol. Log to a file.
 - Over HTTP, every request needs the secret key or a login token (the SDK's
   `TokenVerifier`); roles come from the token's `roles` claim and are checked in each
-  tool. The key is in `~/.config/inspection-camera/api-key` (made by the server at its
+  tool. The key is in `~/.config/inspection-server/api-key` (made by the server at its
   first start; Claude Code reads the same file) unless `API_KEY` is set. Claude Code sends login details only over HTTPS or to `localhost`.
 - Every rule lives in the server: inputs validated, limits in code, a human confirms
   anything with consequences, everything audit-logged. Tool annotations are hints for the

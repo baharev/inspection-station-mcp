@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "inspection-station"
+name = "inspection-mcp-client"
 version = "0.1.0"
 description = "A desktop window where Claude inspects parts with a camera through MCP, and a person confirms every fail"
 license = "MIT"
@@ -15,14 +15,14 @@ dependencies = [
 ]
 
 [project.scripts]
-inspection-station = "inspection_station.app:main"
+inspection-client = "inspection_client.app:main"
 
 [project.optional-dependencies]
 # The tests need no camera server: they use a stand-in (tests/stand_in_server.py).
 test = ["pytest", "anyio", "pillow"]
 
 [tool.setuptools]
-packages = ["inspection_station"]
+packages = ["inspection_client"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

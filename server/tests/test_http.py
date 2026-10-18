@@ -29,8 +29,8 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from PIL import Image
 
-from inspection_camera.camera import FakeCamera
-from inspection_camera.server import create_server, key_auth, oauth_auth, secret_key
+from inspection_server.camera import FakeCamera
+from inspection_server.server import create_server, key_auth, oauth_auth, secret_key
 
 pytestmark = pytest.mark.anyio
 
@@ -201,7 +201,7 @@ def login_server_settings(monkeypatch, **settings):
     """The login server's published settings, as the server reads them at its start."""
     published = {"issuer": ISSUER, "jwks_uri": ISSUER + "/protocol/openid-connect/certs"}
     published.update(settings)
-    monkeypatch.setattr("inspection_camera.server.urlopen",
+    monkeypatch.setattr("inspection_server.server.urlopen",
                         lambda url, timeout: io.BytesIO(json.dumps(published).encode()))
 
 
@@ -227,7 +227,7 @@ def test_a_login_server_that_fits_is_used(monkeypatch):
 def test_an_untrusted_login_server_certificate_is_named_in_the_message(monkeypatch):
     def untrusted(url, timeout):
         raise URLError(ssl.SSLCertVerificationError("certificate verify failed"))
-    monkeypatch.setattr("inspection_camera.server.urlopen", untrusted)
+    monkeypatch.setattr("inspection_server.server.urlopen", untrusted)
     with pytest.raises(SystemExit) as stop:
         oauth_auth("https://localhost:8443/realms/inspection", URL)
     assert "Set SSL_CERT_FILE" in str(stop.value.code)

@@ -15,8 +15,8 @@ from mcp import Client
 from mcp.types import ElicitResult
 from PIL import Image
 
-from inspection_camera.camera import FakeCamera
-from inspection_camera.server import create_server
+from inspection_server.camera import FakeCamera
+from inspection_server.server import create_server
 
 pytestmark = pytest.mark.anyio
 

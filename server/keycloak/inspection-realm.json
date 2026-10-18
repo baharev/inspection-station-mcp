@@ -1,7 +1,7 @@
 {
   "realm": "inspection",
   "enabled": true,
-  "displayName": "Inspection camera (demo: passwords for trying it out, never for a real station)",
+  "displayName": "Inspection server (demo: passwords for trying it out, never for a real station)",
   "roles": {
     "realm": [
       {"name": "viewer", "description": "May take photos and look closer"},
@@ -26,7 +26,7 @@
     {
       "clientId": "claude-code",
       "name": "Claude Code",
-      "description": "The AI application that calls the inspection camera",
+      "description": "The AI application that uses the inspection server",
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,
@@ -36,7 +36,7 @@
       "attributes": {"pkce.code.challenge.method": "S256"},
       "protocolMappers": [
         {
-          "name": "audience: the inspection camera",
+          "name": "audience: the inspection server",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
           "config": {
@@ -61,9 +61,9 @@
       ]
     },
     {
-      "clientId": "inspection-station",
-      "name": "Inspection station",
-      "description": "The desktop app that calls the inspection camera (repository mcp-client)",
+      "clientId": "inspection-client",
+      "name": "Inspection client",
+      "description": "The desktop app that uses the inspection server (repository inspection-mcp-client)",
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,
@@ -73,7 +73,7 @@
       "attributes": {"pkce.code.challenge.method": "S256"},
       "protocolMappers": [
         {
-          "name": "audience: the inspection camera",
+          "name": "audience: the inspection server",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
           "config": {

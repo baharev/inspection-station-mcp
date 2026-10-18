@@ -35,7 +35,7 @@ EFFORT = "high"      # how hard Claude thinks: low, medium, high, xhigh or max
 MAX_TOKENS = 16000   # longest answer per step
 LIVE_GAP = 0.15      # pause between two live frames, in seconds
 
-CAMERA_KEY_FILE = Path.home() / ".config" / "inspection-camera" / "api-key"
+CAMERA_KEY_FILE = Path.home() / ".config" / "inspection-server" / "api-key"
 CLAUDE_KEY_FILE = Path.home() / ".config" / "anthropic" / "api-key"
 
 OPERATOR = ("An operator at the station asks the questions and reads your answers in a "

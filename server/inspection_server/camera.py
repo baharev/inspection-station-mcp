@@ -231,7 +231,7 @@ class RealCamera:
                     raise CameraError(
                         f"The camera {self.device} sends photos of {frame.shape[1]}x"
                         f"{frame.shape[0]} pixels, not the {size_text(self.size)} chosen. "
-                        "Choose a size it offers: inspection-camera --choose-camera")
+                        "Choose a size it offers: inspection-server --choose-camera")
                 times = times[-29:] + [time.monotonic()]
                 with self._lock:
                     if len(times) > 1:

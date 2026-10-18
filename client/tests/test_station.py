@@ -10,7 +10,7 @@ import pytest
 from anthropic.types import Message
 from mcp import Client
 
-from inspection_station.station import (Answer, CameraServerRefused, Done, McpMessage, Note,
+from inspection_client.station import (Answer, CameraServerRefused, Done, McpMessage, Note,
                                         Question, Station, ToolCall, ToolResult, describe)
 from stand_in_server import stand_in_server
 

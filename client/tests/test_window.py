@@ -9,8 +9,8 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QTextFormat
 from PySide6.QtWidgets import QApplication
 
-from inspection_station.app import Window, pretty
-from inspection_station.station import Answer, McpMessage, ToolCall
+from inspection_client.app import Window, pretty
+from inspection_client.station import Answer, McpMessage, ToolCall
 
 app = QApplication.instance() or QApplication([])
 

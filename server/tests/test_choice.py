@@ -8,8 +8,8 @@ import json
 
 import pytest
 
-from inspection_camera import choice
-from inspection_camera.server import main, next_steps
+from inspection_server import choice
+from inspection_server.server import main, next_steps
 
 C270 = ("/dev/v4l/by-id/usb-046d_0825_1-video-index0", "Logitech Webcam C270 (plugged in)")
 BUILT_IN = ("/dev/v4l/by-id/usb-Chicony_Integrated_Camera-video-index0",
@@ -33,9 +33,9 @@ def nobody(prompt):
 def cameras(monkeypatch):
     """The cameras the menu finds, settable by the test; Linux unless the test says otherwise."""
     found = [C270, BUILT_IN]
-    monkeypatch.setattr("inspection_camera.choice.list_cameras", lambda: found)
-    monkeypatch.setattr("inspection_camera.choice.camera_sizes", lambda device: SIZES)
-    monkeypatch.setattr("inspection_camera.choice.sys.platform", "linux")
+    monkeypatch.setattr("inspection_server.choice.list_cameras", lambda: found)
+    monkeypatch.setattr("inspection_server.choice.camera_sizes", lambda device: SIZES)
+    monkeypatch.setattr("inspection_server.choice.sys.platform", "linux")
     return found
 
 
@@ -139,7 +139,7 @@ def test_the_setting_camera_size_comes_before_the_saved_size(cameras, monkeypatc
 
 
 def test_on_windows_a_camera_is_saved_by_name_unless_two_share_it(cameras, monkeypatch):
-    monkeypatch.setattr("inspection_camera.choice.sys.platform", "win32")
+    monkeypatch.setattr("inspection_server.choice.sys.platform", "win32")
     cameras[:] = [("usb#1", "USB Camera"), ("usb#2", "USB Camera"), ("obs", "OBS Virtual Camera")]
     assert choice.menu_entries() == [("usb#1", "USB Camera"), ("usb#2", "USB Camera"),
                                      ("OBS Virtual Camera", "OBS Virtual Camera"),
@@ -147,17 +147,17 @@ def test_on_windows_a_camera_is_saved_by_name_unless_two_share_it(cameras, monke
 
 
 def test_claude_code_starting_the_server_with_no_camera_chosen_gets_the_reason(monkeypatch):
-    monkeypatch.setattr("sys.argv", ["inspection-camera"])
+    monkeypatch.setattr("sys.argv", ["inspection-server"])
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     with pytest.raises(SystemExit) as stop:
         main()
-    assert "inspection-camera --choose-camera" in str(stop.value.code)
+    assert "inspection-server --choose-camera" in str(stop.value.code)
 
 
 def test_a_chosen_camera_that_is_unplugged_stops_the_server_with_what_to_do(tmp_path, monkeypatch):
     choice.save(choice.Choice(str(tmp_path / "unplugged"), "Old Webcam (plugged in)", "",
                               (640, 480)))
-    monkeypatch.setattr("sys.argv", ["inspection-camera", "--http"])
+    monkeypatch.setattr("sys.argv", ["inspection-server", "--http"])
     with pytest.raises(SystemExit) as stop:
         main()
     assert "The camera chosen earlier, Old Webcam (plugged in), cannot be found" in str(stop.value.code)
@@ -172,11 +172,11 @@ def test_the_start_shows_the_addresses_and_the_claude_code_command():
         "with the secret key or a login",
         "MCP address: http://192.168.0.20:8000/mcp"]
     assert "copy the key file there first" in lines[3]
-    assert lines[4] == ("  Linux, macOS: claude mcp add -s local --transport http inspection-camera "
+    assert lines[4] == ("  Linux, macOS: claude mcp add -s local --transport http inspection-server "
                         "http://192.168.0.20:8000/mcp --header \"Authorization: Bearer "
-                        "$(cat ~/.config/inspection-camera/api-key)\"")
+                        "$(cat ~/.config/inspection-server/api-key)\"")
     assert lines[5].startswith("  PowerShell:   claude mcp add")
-    assert lines[5].endswith("$(Get-Content $HOME\\.config\\inspection-camera\\api-key)\"")
+    assert lines[5].endswith("$(Get-Content $HOME\\.config\\inspection-server\\api-key)\"")
     assert lines[6].startswith("Warning: other computers connect over plain HTTP")
 
 

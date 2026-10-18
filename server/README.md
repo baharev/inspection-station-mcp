@@ -1,4 +1,4 @@
-# MCP inspection camera: the server
+# Inspection MCP server
 
 An MCP server that lets an AI application take photos with a camera, look closer at part
 of a photo, and record the result of an inspection. The safety rules are enforced in the
@@ -12,7 +12,7 @@ network with a secret key or with logins and roles.
 
 This repository holds the server, a demo login server and a script for HTTPS
 certificates. Claude Code connects to it directly. The companion repository
-`mcp-client` holds a desktop app that uses it, where Claude inspects with the camera and
+`inspection-mcp-client` holds a desktop app that uses it, where Claude inspects with the camera and
 a person confirms every fail. To try it, see
 [Installing](#installing) and [How to start it](#how-to-start-it).
 
@@ -45,9 +45,9 @@ below it offers the others. Click **Start**. The box at the bottom then shows th
 the live view, and the command that connects Claude Code to the server: run that command
 once in the folder where you use Claude Code, start Claude Code there with `claude`, and
 ask "Take a photo. What does the gauge read?" The desktop app, in the repository
-`mcp-client`, connects without that command.
+`inspection-mcp-client`, connects without that command.
 
-On a computer without a screen, `inspection-camera --http` starts the server in the
+On a computer without a screen, `inspection-server --http` starts the server in the
 terminal instead, and shows the same. The rest of this README explains each step, other
 setups, and logins.
 
@@ -84,7 +84,7 @@ so the server asks a person first (see [the rules](#the-rules-and-where-they-liv
 
 ![The setup. Left: the inspection station, where no AI runs: a camera above a conveyor belt, and the station computer with the MCP server, which keeps the inspection log. Right: the operator's computer with the desktop app, which talks to the MCP server over the network and to Claude, the AI, on the internet.](docs/setup.svg)
 
-The desktop app is in the companion repository `mcp-client`; Claude Code can take its
+The desktop app is in the companion repository `inspection-mcp-client`; Claude Code can take its
 place. The station computer, the one the camera is plugged into, and the operator's
 computer can also be one and the same, and the camera a USB webcam, or the fake camera,
 which serves stored photos instead.
@@ -110,7 +110,7 @@ refused.
 
 ## The rules, and where they live
 
-All in the server code (`inspection_camera/server.py`), so they hold whatever the AI is
+All in the server code (`inspection_server/server.py`), so they hold whatever the AI is
 told or tries:
 
 - **Inputs are checked.** Photo IDs, part labels, verdicts and the length of the findings
@@ -163,7 +163,7 @@ pytest -q
 `python3.13` instead of `python3`.) This makes a Python environment of its own in
 `.venv`, installs the server into it, and runs the tests. The tests use a fake camera
 with pictures drawn by the test code, so they need no hardware. The install adds the
-command `inspection-camera`, which starts the server, and `inspection-server-window`, a
+command `inspection-server`, which starts the server, and `inspection-server-window`, a
 window that starts it for you (see [The server window](#the-server-window)). In every
 new terminal, activate the environment again before using it:
 
@@ -180,8 +180,8 @@ this folder (`captures/` and `logs/` are kept out of git).
 | Your situation | Who starts the server, and how | See |
 |---|---|---|
 | Try it on one computer, no camera needed | Claude Code starts it by itself; you run no server command | [Try it on one computer](#try-it-on-one-computer) |
-| One computer, and you want to watch the live view | You, in a terminal: `inspection-camera --http` | [The live view on one computer](#the-live-view-on-one-computer) |
-| The camera on one computer, Claude Code on another | You, on the station computer: `inspection-camera --http --host 0.0.0.0` | [The camera on one computer, Claude Code on another](#the-camera-on-one-computer-claude-code-on-another) |
+| One computer, and you want to watch the live view | You, in a terminal: `inspection-server --http` | [The live view on one computer](#the-live-view-on-one-computer) |
+| The camera on one computer, Claude Code on another | You, on the station computer: `inspection-server --http --host 0.0.0.0` | [The camera on one computer, Claude Code on another](#the-camera-on-one-computer-claude-code-on-another) |
 | Either of the two above, but you would rather click than type | You, with a window: Start and Stop | [The server window](#the-server-window) |
 | Each person logs in, with a role | You, with a login server | [Logins with roles](#logins-with-roles) |
 
@@ -202,13 +202,13 @@ repository's folder), go to the folder where you want to use Claude Code (any fo
 this one too) and run:
 
 ```
-claude mcp add -s local inspection-camera -e CAMERA=fake -- "$(which inspection-camera)"
+claude mcp add -s local inspection-server -e CAMERA=fake -- "$(which inspection-server)"
 claude
 ```
 
 The first line registers the server for Claude Code, in this folder only and for you
 only (`-s local`); it is needed once. The second starts Claude Code. Type `/mcp` in
-Claude Code: it should show `inspection-camera` as connected. Then ask, for example:
+Claude Code: it should show `inspection-server` as connected. Then ask, for example:
 "Take a photo of the inspection station. What does the gauge read?" When Claude records
 a fail, Claude Code shows the server's question in the terminal, with the box "Mark this
 part as FAILED?" and the choices "Accept" and "Decline": "Accept" with the box ticked
@@ -218,19 +218,19 @@ With a real camera, choose it and its photo size once, in a terminal with the
 environment active (see [Choosing a camera](#choosing-a-camera)):
 
 ```
-inspection-camera --choose-camera
+inspection-server --choose-camera
 ```
 
 Then register the server as above, but without `-e CAMERA=fake`, which would come before
 your choice (if it is registered already, remove it first with
-`claude mcp remove inspection-camera -s local`):
+`claude mcp remove inspection-server -s local`):
 
 ```
-claude mcp add -s local inspection-camera -- "$(which inspection-camera)"
+claude mcp add -s local inspection-server -- "$(which inspection-server)"
 ```
 
 Claude Code then starts the server with the camera you chose. To choose another later,
-run `inspection-camera --choose-camera` again and restart Claude Code.
+run `inspection-server --choose-camera` again and restart Claude Code.
 
 This way has no live view: the live view needs the server running over HTTP, as in the
 next section.
@@ -243,7 +243,7 @@ two terminals, both with the environment active.
 **Terminal 1**, in this repository's folder, starts the server:
 
 ```
-inspection-camera --http
+inspection-server --http
 ```
 
 The first time, it asks which camera to use, for example:
@@ -263,14 +263,14 @@ questions. It runs until you stop
 it with Ctrl+C. It is ready when it shows:
 
 ```
-Camera: Sample photos, no camera (the fake camera), chosen now; to choose another: inspection-camera --choose-camera
-Secret key: /home/<you>/.config/inspection-camera/api-key (made now)
+Camera: Sample photos, no camera (the fake camera), chosen now; to choose another: inspection-server --choose-camera
+Secret key: /home/<you>/.config/inspection-server/api-key (made now)
 Only this computer can connect. To let other computers in, start with --host 0.0.0.0 too.
 Live view: http://localhost:8000/live
 MCP address: http://localhost:8000/mcp
 To connect Claude Code, run this once in the folder where you use it:
-  Linux, macOS: claude mcp add -s local --transport http inspection-camera http://localhost:8000/mcp --header "Authorization: Bearer $(cat ~/.config/inspection-camera/api-key)"
-  PowerShell:   claude mcp add -s local --transport http inspection-camera http://localhost:8000/mcp --header "Authorization: Bearer $(Get-Content $HOME\.config\inspection-camera\api-key)"
+  Linux, macOS: claude mcp add -s local --transport http inspection-server http://localhost:8000/mcp --header "Authorization: Bearer $(cat ~/.config/inspection-server/api-key)"
+  PowerShell:   claude mcp add -s local --transport http inspection-server http://localhost:8000/mcp --header "Authorization: Bearer $(Get-Content $HOME\.config\inspection-server\api-key)"
 ...
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 ```
@@ -284,8 +284,8 @@ that file in the next step.
 server showed for your terminal (here the one for Linux), then start Claude Code:
 
 ```
-claude mcp add -s local --transport http inspection-camera http://localhost:8000/mcp \
-    --header "Authorization: Bearer $(cat ~/.config/inspection-camera/api-key)"
+claude mcp add -s local --transport http inspection-server http://localhost:8000/mcp \
+    --header "Authorization: Bearer $(cat ~/.config/inspection-server/api-key)"
 claude
 ```
 
@@ -306,7 +306,7 @@ first picture that arrives after it was asked for, so it shows the scene as it i
   Write `localhost`: under the computer's network address, the server treats the page as
   coming from another computer.
 - **From another computer**: `http://<the server's address>:8000/live`. The page asks
-  for the secret key (show it with `cat ~/.config/inspection-camera/api-key` and paste
+  for the secret key (show it with `cat ~/.config/inspection-server/api-key` and paste
   it) and keeps it until the tab is closed.
 
 The page asks for pictures only while its tab is visible, and the server lets go of the
@@ -315,7 +315,7 @@ the photo that the next `capture_image` will return.
 
 ## The server window
 
-A small window that starts and stops the server over HTTP, as `inspection-camera --http`
+A small window that starts and stops the server over HTTP, as `inspection-server --http`
 does in a terminal, for people who would rather click than type. The server is the same
 either way: the window runs that command for you and shows what it prints. Logins and
 HTTPS are not in the window; for those, start the server in a terminal.
@@ -367,14 +367,14 @@ conda-forge channel draws them smoothly. Make the environment from there, then i
 the server into it, in this repository's folder:
 
 ```
-conda create -n mcp -c conda-forge python=3.14 "tk=*=xft*"
-conda activate mcp
+conda create -n inspection-server -c conda-forge python=3.14 "tk=*=xft*"
+conda activate inspection-server
 pip install -e ".[test]"
 ```
 
-`xft` is the build of Tk with smooth letters. If an environment `mcp` exists already,
+`xft` is the build of Tk with smooth letters. If an environment `inspection-server` exists already,
 give the new one another name, or remove the old one first with
-`conda env remove -n mcp`. Windows is not affected.
+`conda env remove -n inspection-server`. Windows is not affected.
 
 ## Choosing a camera
 
@@ -385,7 +385,7 @@ number in a list. The server shows the list when it is started in a terminal wit
 also to change a choice or to choose before Claude Code starts the server, run:
 
 ```
-inspection-camera --choose-camera
+inspection-server --choose-camera
 ```
 
 Alone, this chooses and stops; with `--http` and the other options, it chooses and then
@@ -397,8 +397,8 @@ show virtual cameras that other programs install, such as OBS's; leave those out
 last entry, the sample photos, needs no camera. If your camera is missing, plug it in,
 press Ctrl+C and start again.
 
-The choice is saved in `~/.config/inspection-camera/settings.json` (on Windows
-`$HOME\.config\inspection-camera\settings.json`) as the camera's path on Linux, or its
+The choice is saved in `~/.config/inspection-server/settings.json` (on Windows
+`$HOME\.config\inspection-server\settings.json`) as the camera's path on Linux, or its
 name on Windows and macOS (its device path, for two cameras of the same model). Never as
 its number in the list: numbers change when devices are plugged in. Every start shows
 which camera it uses. If the chosen camera is not there, the server stops at once and
@@ -433,7 +433,7 @@ Type its number (1 to 4), or press Enter for 1920x1080:
 ```
 
 Press Enter for the suggested size, or type the number of another. The size is saved
-with the camera; `inspection-camera --choose-camera` asks for both again. The setting
+with the camera; `inspection-server --choose-camera` asks for both again. The setting
 `CAMERA_SIZE`, if set, comes before the saved size.
 
 The suggestion is 1920×1080 (Full HD) if the camera offers it, otherwise the largest size
@@ -491,7 +491,7 @@ the network is 192.168.0.20 (the server shows it when it starts).
 1. Start the server, and leave it running:
 
    ```
-   inspection-camera --http --host 0.0.0.0
+   inspection-server --http --host 0.0.0.0
    ```
 
    The first time, it asks which camera to use: type its number (see
@@ -509,21 +509,21 @@ the network is 192.168.0.20 (the server shows it when it starts).
    people or the room.
 
 **Copy the key file** to the Claude Code computer, to the same place:
-`~/.config/inspection-camera/api-key`. Use `scp`, on whichever computer can log in to
+`~/.config/inspection-server/api-key`. Use `scp`, on whichever computer can log in to
 the other over SSH:
 
 - If the station computer runs an SSH server, on the Claude Code computer:
 
   ```
-  mkdir -p ~/.config/inspection-camera
-  scp <user>@192.168.0.20:.config/inspection-camera/api-key ~/.config/inspection-camera/
+  mkdir -p ~/.config/inspection-server
+  scp <user>@192.168.0.20:.config/inspection-server/api-key ~/.config/inspection-server/
   ```
 
 - If only the Claude Code computer runs one, on the station computer:
 
   ```
-  ssh <user>@<Claude Code computer> mkdir -p .config/inspection-camera
-  scp ~/.config/inspection-camera/api-key <user>@<Claude Code computer>:.config/inspection-camera/
+  ssh <user>@<Claude Code computer> mkdir -p .config/inspection-server
+  scp ~/.config/inspection-server/api-key <user>@<Claude Code computer>:.config/inspection-server/
   ```
 
 The key only has to be the same in both files. If the Claude Code computer already has a
@@ -534,16 +534,16 @@ start; the server then uses it.
 
 3. In the folder where you want to use Claude Code, register the server with the key,
    once, with the command the server showed for this computer's terminal (here the one
-   for Linux). If a server called `inspection-camera` is already registered there,
-   remove it first with `claude mcp remove inspection-camera -s local`.
+   for Linux). If a server called `inspection-server` is already registered there,
+   remove it first with `claude mcp remove inspection-server -s local`.
 
    ```
-   claude mcp add -s local --transport http inspection-camera http://192.168.0.20:8000/mcp \
-       --header "Authorization: Bearer $(cat ~/.config/inspection-camera/api-key)"
+   claude mcp add -s local --transport http inspection-server http://192.168.0.20:8000/mcp \
+       --header "Authorization: Bearer $(cat ~/.config/inspection-server/api-key)"
    ```
 
 4. Start Claude Code with `claude` in the same folder; `/mcp` should show
-   `inspection-camera` as connected. Ask, for example: "Take a photo of the inspection
+   `inspection-server` as connected. Ask, for example: "Take a photo of the inspection
    station. What do you see?" Photos and logs are kept on the station computer, in its
    `captures/` and `logs/`. If the server shows 401 in its terminal, the two key files
    differ. To watch the live view from this computer too, open
@@ -562,7 +562,7 @@ computer, make a certificate once and start the server with it:
 
 ```
 scripts/make_certs.sh 192.168.0.20
-inspection-camera --http --host 0.0.0.0 --tls-cert certs/server.pem --tls-key certs/server.key
+inspection-server --http --host 0.0.0.0 --tls-cert certs/server.pem --tls-key certs/server.key
 ```
 
 Copy `certs/ca.pem` to the Claude Code computer (as the key file), use the `https://`
@@ -586,7 +586,7 @@ claims edited after signing, and more): all refused. `scripts/keycloak.sh` start
 record results) and `viewer` (password `viewer`; may only take photos, look closer and
 watch the live view). Claude Code is registered there in advance, as an administrator
 would register each application that may connect, and so is the desktop app of the
-repository `mcp-client` (its README, "Logins with roles", has its steps).
+repository `inspection-mcp-client` (its README, "Logins with roles", has its steps).
 
 On one computer, in three terminals (the first two in this repository's folder, with
 the environment active):
@@ -594,17 +594,17 @@ the environment active):
 ```
 scripts/keycloak.sh                       # terminal 1: the login server; ready at "Listening on"
 OAUTH_ISSUER=http://localhost:8080/realms/inspection SERVER_URL=http://localhost:8000/mcp \
-    inspection-camera --http              # terminal 2: the server, with logins instead of the key
+    inspection-server --http              # terminal 2: the server, with logins instead of the key
 claude mcp add -s local --transport http --client-id claude-code --callback-port 33418 \
-    inspection-camera http://localhost:8000/mcp
-claude mcp login inspection-camera        # terminal 3: register once, then log in
+    inspection-server http://localhost:8000/mcp
+claude mcp login inspection-server        # terminal 3: register once, then log in
 claude
 ```
 
 The login opens the browser (`--no-browser` prints the address instead, for a session
 over SSH). Log in as `inspector` and ask Claude Code to inspect something; every line of
 `logs/audit.log` and every record now names `inspector`. Log out with `claude mcp logout
-inspection-camera`, and in the browser at
+inspection-server`, and in the browser at
 `http://localhost:8080/realms/inspection/protocol/openid-connect/logout` (otherwise the
 login server logs you straight back in as `inspector`). Log in as `viewer`, and asking
 to record a result is refused by the server, with the reason. Claude Code renews the
@@ -623,7 +623,7 @@ scripts/make_certs.sh 192.168.0.20     # once: a private certificate authority, 
 MCP_SERVER_URL=https://192.168.0.20:8000/mcp scripts/keycloak.sh --https      # terminal 1
 SSL_CERT_FILE=certs/ca.pem OAUTH_ISSUER=https://192.168.0.20:8443/realms/inspection \
     SERVER_URL=https://192.168.0.20:8000/mcp \
-    inspection-camera --http --host 0.0.0.0 --tls-cert certs/server.pem --tls-key certs/server.key  # terminal 2
+    inspection-server --http --host 0.0.0.0 --tls-cert certs/server.pem --tls-key certs/server.key  # terminal 2
 ```
 
 Copy `certs/ca.pem` to the other computer, register the server there as above with
@@ -644,7 +644,7 @@ server (dynamic client registration; most plants register applications by hand).
 ## Settings and options
 
 The server reads these settings from the environment; on Linux and macOS, write them in
-front of the command, as in `CAMERA=fake inspection-camera --http`; in PowerShell, write
+front of the command, as in `CAMERA=fake inspection-server --http`; in PowerShell, write
 each one on a line of its own before the command, as in `$env:CAMERA = 'fake'`:
 
 | Setting | What it does |
@@ -653,12 +653,12 @@ each one on a line of its own before the command, as in `$env:CAMERA = 'fake'`:
 | `CAMERA_SIZE` | If set, used instead of the photo size chosen in the list, like `1920x1080`: one the camera offers, as `scripts/check_camera.py` lists them. Needed with a real camera in `CAMERA` |
 | `SAMPLES_DIR` | The photos the fake camera serves (default: `samples/`) |
 | `DATA_DIR` | Where photos (`captures/`) and logs (`logs/`) are kept (default: this folder) |
-| `API_KEY` | With `--http`: a secret key of your own, at least 32 characters, instead of the key file `~/.config/inspection-camera/api-key` |
+| `API_KEY` | With `--http`: a secret key of your own, at least 32 characters, instead of the key file `~/.config/inspection-server/api-key` |
 | `OAUTH_ISSUER` | With `--http`, instead of a key: the login server whose tokens are accepted; an `https://` address, or one on this computer (`localhost`) |
 | `SERVER_URL` | With `OAUTH_ISSUER`: this server's address as clients use it; tokens must be issued for it |
 | `SSL_CERT_FILE` | When the login server uses a private certificate: the certificate authority to trust (`certs/ca.pem`) |
 
-The options of `inspection-camera`:
+The options of `inspection-server`:
 
 | Option | What it does |
 |---|---|
@@ -692,8 +692,8 @@ is the older Command Prompt, where the PowerShell commands below do not work. Ma
 environment with Python 3.14 and install into it, once:
 
 ```
-conda create -n mcp python=3.14
-conda activate mcp
+conda create -n inspection-server python=3.14
+conda activate inspection-server
 cd <this repository's folder>
 pip install -e ".[test]"
 pytest -q
@@ -701,36 +701,36 @@ pytest -q
 
 The first time, conda asks whether you accept the terms of service of Anaconda's package
 channels (three questions; answer `a` to each), then `Proceed ([y]/n)?`. In every new
-Anaconda PowerShell Prompt, run `conda activate mcp` and `cd` to the repository's folder;
+Anaconda PowerShell Prompt, run `conda activate inspection-server` and `cd` to the repository's folder;
 everything below then works as with the virtual environment.
 
 Try it on one computer (Claude Code starts the server):
 
 ```
-claude mcp add -s local inspection-camera -e "CAMERA=fake" -- (Get-Command inspection-camera).Source
+claude mcp add -s local inspection-server -e "CAMERA=fake" -- (Get-Command inspection-server).Source
 claude
 ```
 
 The live view on one computer: in window 1, start the server; in window 2, register it
-with the key file (`$HOME\.config\inspection-camera\api-key`) and start Claude Code:
+with the key file (`$HOME\.config\inspection-server\api-key`) and start Claude Code:
 
 ```
-inspection-camera --http
+inspection-server --http
 ```
 
 ```
-claude mcp add -s local --transport http inspection-camera http://localhost:8000/mcp --header "Authorization: Bearer $(Get-Content $HOME\.config\inspection-camera\api-key)"
+claude mcp add -s local --transport http inspection-server http://localhost:8000/mcp --header "Authorization: Bearer $(Get-Content $HOME\.config\inspection-server\api-key)"
 claude
 ```
 
 A setting written in front of a command above, as in
-`OAUTH_ISSUER=<address> SERVER_URL=<address> inspection-camera --http`, is a line of its
+`OAUTH_ISSUER=<address> SERVER_URL=<address> inspection-server --http`, is a line of its
 own in PowerShell, starting with `$env:`; it holds until the window is closed:
 
 ```
 $env:OAUTH_ISSUER = 'http://localhost:8080/realms/inspection'
 $env:SERVER_URL = 'http://localhost:8000/mcp'
-inspection-camera --http
+inspection-server --http
 ```
 
 Written the Linux way, PowerShell does not take it as a setting: it tries to run it as a
@@ -741,26 +741,26 @@ line.
 
 The camera on Windows, Claude Code on another computer: Windows 10 and later include
 `ssh` and `scp`, for copying the key file. On the Windows side, write the key file's
-folder as `$HOME\.config\inspection-camera`, not with `~`: PowerShell passes `~` to `scp`
+folder as `$HOME\.config\inspection-server`, not with `~`: PowerShell passes `~` to `scp`
 unchanged, and the copy fails. On the Windows computer, either fetch the key file of the
 Claude Code computer, before the server's first start:
 
 ```
-mkdir -Force $HOME\.config\inspection-camera
-scp <user>@<Claude Code computer>:.config/inspection-camera/api-key $HOME\.config\inspection-camera\
+mkdir -Force $HOME\.config\inspection-server
+scp <user>@<Claude Code computer>:.config/inspection-server/api-key $HOME\.config\inspection-server\
 ```
 
 or send the key file the server made to the Claude Code computer:
 
 ```
-ssh <user>@<Claude Code computer> mkdir -p .config/inspection-camera
-scp $HOME\.config\inspection-camera\api-key <user>@<Claude Code computer>:.config/inspection-camera/
+ssh <user>@<Claude Code computer> mkdir -p .config/inspection-server
+scp $HOME\.config\inspection-server\api-key <user>@<Claude Code computer>:.config/inspection-server/
 ```
 
 To let other computers in with `--host 0.0.0.0`, open the port in an administrator
 PowerShell (also when you tick "Let other computers connect" in
 [the server window](#the-server-window)):
-`New-NetFirewallRule -DisplayName "inspection-camera" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow`.
+`New-NetFirewallRule -DisplayName "inspection-server" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow`.
 At the server's first start with `--host 0.0.0.0`, Windows may also ask whether Python
 may use the network: allow it, with the box for the kind of network the computer is on
 (a home network can be set up as "Public"). If it was refused, Windows blocks Python
@@ -788,14 +788,14 @@ copied, and a photo taken through MCP with the key.
 
 ## Files
 
-- `inspection_camera/server.py`: the MCP server: tools, rules, logs, key and login
+- `inspection_server/server.py`: the MCP server: tools, rules, logs, key and login
   checks, the live view
-- `inspection_camera/camera.py`: the real camera (opened and shared by the server) and
+- `inspection_server/camera.py`: the real camera (opened and shared by the server) and
   the fake one
-- `inspection_camera/choice.py`: choosing the camera and its photo size in lists, and
+- `inspection_server/choice.py`: choosing the camera and its photo size in lists, and
   saving the choice
-- `inspection_camera/live.html`: the live view page
-- `inspection_camera/window.py`: the server window
+- `inspection_server/live.html`: the live view page
+- `inspection_server/window.py`: the server window
 - `tests/test_server.py`: the tests of the tools; `tests/test_http.py`: over HTTP, with
   the key and with logins, and the live view; `tests/test_camera.py`: the cameras, the
   real one against a stand-in device; `tests/test_choice.py`: choosing the camera and

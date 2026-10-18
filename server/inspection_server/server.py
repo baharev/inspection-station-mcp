@@ -6,10 +6,10 @@ a "fail" (the part is taken off the line) needs a person's yes, and everything i
 Over the network, every request needs a secret key or a login, and a login's roles
 decide which tools its user may call.
 
-    inspection-camera                 # stdio MCP server (started by a client such as Claude Code)
-    inspection-camera --http [--host 0.0.0.0] [--port 8000] [--tls-cert C --tls-key K]
+    inspection-server                 # stdio MCP server (started by a client such as Claude Code)
+    inspection-server --http [--host 0.0.0.0] [--port 8000] [--tls-cert C --tls-key K]
                                       # over the network, at http(s)://<host>:<port>/mcp
-    inspection-camera --choose-camera [--http ...]
+    inspection-server --choose-camera [--http ...]
                                       # choose the camera in a menu (saved for later starts)
 
 The camera and the size of its photos are always chosen by a person: once, in menus at
@@ -32,7 +32,7 @@ Environment:
     SAMPLES_DIR  photos the fake camera serves (default: samples/)
     DATA_DIR     where photos (captures/) and logs (logs/) are kept (default: this repo)
     API_KEY      with --http: the secret key every client must send, at least 32 characters;
-                 if not set, the key in ~/.config/inspection-camera/api-key, which the
+                 if not set, the key in ~/.config/inspection-server/api-key, which the
                  server makes on its first start (copy it to wherever Claude Code runs)
     OAUTH_ISSUER with --http, instead of a key: the login server (OAuth authorization
                  server) whose tokens are accepted, e.g. http://localhost:8080/realms/inspection
@@ -73,8 +73,8 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, PlainTextResponse, Response
 
-from inspection_camera import choice as camera_choice
-from inspection_camera.camera import CameraError, FakeCamera, RealCamera
+from inspection_server import choice as camera_choice
+from inspection_server.camera import CameraError, FakeCamera, RealCamera
 
 REPO = Path(__file__).resolve().parent.parent
 LIVE_PAGE = Path(__file__).resolve().parent / "live.html"
@@ -84,7 +84,7 @@ ZOOM_SIZE = 1024          # longer side of an enlarged crop, in pixels
 MIN_ZOOM = 0.1            # smallest crop, as a fraction of the photo's width or height
 MAX_FINDINGS = 500        # characters
 MIN_KEY_LENGTH = 32       # characters of the secret key
-KEY_FILE = Path.home() / ".config" / "inspection-camera" / "api-key"
+KEY_FILE = Path.home() / ".config" / "inspection-server" / "api-key"
 LIVE_GAP = 60             # seconds without a frame after which a live viewer is logged again
 
 # Who may call which tool. Logins carry their roles in the token's "roles" claim; the
@@ -222,7 +222,7 @@ def create_server(camera, data_dir: str | Path = REPO, *, auth: AuthSettings | N
         return buffer.getvalue()
 
     mcp = MCPServer(
-        "inspection-camera",
+        "inspection-server",
         instructions=(
             "One inspection station: a camera looks down at parts on a light background. "
             "Take a photo with capture_image to answer questions about what is there. "
@@ -499,11 +499,11 @@ def next_steps(host: str, port: int, scheme: str, key_file: bool,
     url = mcp_url or f"{scheme}://{there or here}:{port}/mcp"
     lines.append(f"MCP address: {url}")
     if key_file:   # the commands read the key from the key file, so nobody types it
-        read_key = {"Linux, macOS:": "$(cat ~/.config/inspection-camera/api-key)",
-                    "PowerShell:": "$(Get-Content $HOME\\.config\\inspection-camera\\api-key)"}
+        read_key = {"Linux, macOS:": "$(cat ~/.config/inspection-server/api-key)",
+                    "PowerShell:": "$(Get-Content $HOME\\.config\\inspection-server\\api-key)"}
         lines.append("To connect Claude Code, run this once in the folder where you use it"
                      + (" (on another computer, copy the key file there first):" if there else ":"))
-        lines += [f"  {shell:14}claude mcp add -s local --transport http inspection-camera {url} "
+        lines += [f"  {shell:14}claude mcp add -s local --transport http inspection-server {url} "
                   f'--header "Authorization: Bearer {key}"' for shell, key in read_key.items()]
     if there and scheme == "http":
         lines.append("Warning: other computers connect over plain HTTP, so anyone on the network "

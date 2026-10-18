@@ -12,10 +12,10 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from inspection_camera import camera as cameras
-from inspection_camera.camera import (CameraError, FakeCamera, RealCamera, camera_sizes,
+from inspection_server import camera as cameras
+from inspection_server.camera import (CameraError, FakeCamera, RealCamera, camera_sizes,
                                       parse_size, suggested_size)
-from inspection_camera.server import main
+from inspection_server.server import main
 
 
 class StandIn:
@@ -150,14 +150,14 @@ def test_the_suggested_size_is_full_hd_or_the_largest_inside_it_never_simply_the
 
 
 def test_the_sizes_are_listed_largest_first_without_the_tiny_ones(monkeypatch):
-    monkeypatch.setattr("inspection_camera.camera.sys.platform", "linux")
+    monkeypatch.setattr("inspection_server.camera.sys.platform", "linux")
     monkeypatch.setattr(cameras, "_linux_sizes", lambda device: [(320, 240), (640, 480),
                                                                    (1920, 1080), (1280, 720)])
     assert camera_sizes("any") == [(1920, 1080), (1280, 720), (640, 480)]
 
 
 def test_on_windows_and_macos_the_sizes_are_found_by_asking_for_common_ones(monkeypatch):
-    monkeypatch.setattr("inspection_camera.camera.sys.platform", "win32")
+    monkeypatch.setattr("inspection_server.camera.sys.platform", "win32")
     monkeypatch.setattr(RealCamera, "_open", lambda self: StandIn(sizes=C922))
     assert camera_sizes("USB Camera") == [(2304, 1536), (1920, 1080), (1600, 896),
                                           (1280, 720), (640, 480)]   # 2304x1296: not asked
@@ -165,7 +165,7 @@ def test_on_windows_and_macos_the_sizes_are_found_by_asking_for_common_ones(monk
 
 def test_a_camera_that_is_not_there_is_refused_without_opening_it(monkeypatch, tmp_path):
     monkeypatch.setattr(RealCamera, "_open", lambda self: pytest.fail("the camera was opened"))
-    monkeypatch.setattr("inspection_camera.camera.sys.platform", "linux")
+    monkeypatch.setattr("inspection_server.camera.sys.platform", "linux")
     (tmp_path / "camera").touch()
     RealCamera(str(tmp_path / "camera")).check()
     with pytest.raises(CameraError, match="No camera at"):
@@ -176,8 +176,8 @@ def test_on_windows_and_macos_the_setting_must_match_exactly_one_camera(monkeypa
     listed = [SimpleNamespace(name="USB Camera", path="usb#1"),
               SimpleNamespace(name="USB Camera", path="usb#2"),
               SimpleNamespace(name="OBS Virtual Camera", path="obs")]
-    monkeypatch.setattr("inspection_camera.camera._enumerate", lambda: listed)
-    monkeypatch.setattr("inspection_camera.camera.sys.platform", "win32")
+    monkeypatch.setattr("inspection_server.camera._enumerate", lambda: listed)
+    monkeypatch.setattr("inspection_server.camera.sys.platform", "win32")
     RealCamera("usb#2").check()
     for device, count in (("USB Camera", 2), ("Webcam", 0)):
         with pytest.raises(CameraError, match=f"{count} cameras match"):
@@ -186,7 +186,7 @@ def test_on_windows_and_macos_the_setting_must_match_exactly_one_camera(monkeypa
 
 def test_the_server_does_not_start_without_its_camera(monkeypatch):
     monkeypatch.setenv("CAMERA", "no-such-camera")
-    monkeypatch.setattr("sys.argv", ["inspection-camera"])
+    monkeypatch.setattr("sys.argv", ["inspection-server"])
     with pytest.raises(SystemExit) as stop:
         main()
     assert "no-such-camera" in str(stop.value.code)
