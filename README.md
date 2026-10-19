@@ -21,7 +21,7 @@ The demo illustrates:
 
 **Author:** [Ali Baharev](https://baharev.info/).
 
-I built this project with Claude Code, which wrote much of the code under my direction. My instructions to it are in the `CLAUDE.md` files. The architecture, rules, and verification strategy were my decisions.
+I built this project with Claude Code, which wrote much of the code under my direction. The standing instructions I keep for it are in the `CLAUDE.md` files. The architecture, rules, and verification strategy were my decisions.
 
 This is a completed demonstration in maintenance mode: I keep it working and up to date, but issues and pull requests are disabled. You are welcome to fork it under the [MIT license](LICENSE).
 
@@ -386,7 +386,7 @@ Every rule is in the server's code (`server/inspection_server/server.py`), so it
 
 - **Inputs are checked.** Photo IDs, part labels, verdicts and the length of the findings must have the expected form; anything else is refused with a readable reason. A photo ID can never point to another file.
 - **Limits are in code.** The photo the AI is sent is capped at 1280×720 pixels; zoom rectangles must lie inside the photo, and a crop less than a tenth of the photo's width or height, which would show only blur, is refused.
-- **A person confirms a fail.** Before a fail is recorded, the server asks the person at the keyboard, through the part of MCP that lets a server ask the user a question (called elicitation). If they agree, the part is recorded as failed. If they say no, decline the question or close it, it is recorded as unsure, to be put aside for a person to look at. With AI applications that use the protocol version 2026-07-28, such as the desktop app, the person has an hour to answer; an answer that comes later, or after the server was restarted, records nothing, and the AI has to propose the fail again. Applications of the older version are asked while the call waits, with no time limit set by the server.
+- **A person confirms a fail.** Before a fail is recorded, the server asks the person at the keyboard, through the part of MCP that lets a server ask the user a question (called elicitation). If they agree, the part is recorded as failed. If they say no, decline the question or close it, it is recorded as unsure, to be put aside for a person to look at. With AI applications that use the protocol version 2026-07-28, such as the desktop app, the person has an hour to answer; an answer that comes later, or after the server was restarted, records nothing, and the AI has to propose the fail again. Applications of the older versions are asked while the call waits, with no time limit set by the server.
 - **One record per photo.** The log never holds two verdicts for the same picture.
 - **Actions and refusals are logged.** Every photo, closer look, record and fail question, and every request a rule turns away (no key or login, a missing role, a zoom too small or outside the photo, a second record for a photo), is logged with the time and who called. A malformed input, such as a photo ID that is not one, and a photo that does not exist are refused too, but leave no line in the log. See [The audit trail](#the-audit-trail).
 - **Over the network, nobody gets in without a key or a login.** A login's roles decide which tools its user may call: the role `viewer` allows photos, closer looks and the live view, the role `inspector` allows recording. The server checks the roles at every call, each on its own, so an inspector needs both, as the demo's user `inspector` has. The one exception: the live view needs no key on the station computer itself.
@@ -521,7 +521,7 @@ Fix the model version and the inspection setup used for the validation. A new mo
 
 ## Reading the code
 
-The two programs are about 3,000 lines of Python, counting comments and blank lines but not the tests: the server about 1,700, with 166 tests, the app about 1,350, with 66. The MCP ideas live in about 400 of those lines. A reading order:
+The two programs are about 3,000 lines of Python, counting comments and blank lines but not the tests: the server about 1,700, with 171 tests, the app about 1,350, with 66. The MCP ideas live in about 400 of those lines. A reading order:
 
 1. `client/tests/stand_in_server.py`: a small server with the same three tools that the app's tests run against; the shortest example of a tool that asks the person a question.
 2. `server/scripts/try_tools.py`: a whole MCP client in one page, calling the real server's tools without an AI.
@@ -531,9 +531,9 @@ The two programs are about 3,000 lines of Python, counting comments and blank li
 
 Safe to skip at first: the server window (`window.py`), choosing the camera (`choice.py`), the camera code (`camera.py`, apart from `FakeCamera`), the live view page, the app's window (`app.py`) and its login (`login.py`).
 
-The server speaks MCP protocol version 2026-07-28, which keeps no session: there, the server's question for the person comes back as the tool call's result, with the server's state sealed inside it, and the call is sent again with the answer. It also serves clients of the older version 2025-11-25, which keeps a session and asks during the call. The app's "Show MCP messages" checkbox shows the messages' contents as the app sent and received them, with the pictures and the sealed state shortened.
+The server speaks MCP protocol version 2026-07-28, which keeps no session: there, the server's question for the person comes back as the tool call's result, with the server's state sealed inside it, and the call is sent again with the answer. It also serves clients of the older versions (2025-11-25 and before), which keep a session and ask during the call. The app's "Show MCP messages" checkbox shows the messages' contents as the app sent and received them, with the pictures and the sealed state shortened.
 
-The tests were tested too: bugs were planted in the code by hand, one at a time, each breaking a rule the way a developer could really get it wrong, and each gap they found got a test. See [the server's](server/docs/test-quality.md) and [the app's](client/docs/test-quality.md) record of it. There are about as many lines of tests as of code: the server's 1,235 lines of code have 1,234 lines of tests (1.00 lines of tests per line of code), and the app's 1,004 lines have 949 (0.95). These count only lines with code on them: no blank lines, comments or docstrings, and not the two scripts in `server/scripts`.
+The tests were tested too: bugs were planted in the code by hand, one at a time, each breaking a rule the way a developer could really get it wrong, and each gap they found got a test. See [the server's](server/docs/test-quality.md) and [the app's](client/docs/test-quality.md) record of it. There are about as many lines of tests as of code: the server's 1,237 lines of code have 1,239 lines of tests (1.00 lines of tests per line of code), and the app's 1,004 lines have 949 (0.95). These count only lines with code on them: no blank lines, comments or docstrings, and not the two scripts in `server/scripts`.
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) 2.3.0, the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python) and [PySide6](https://doc.qt.io/qtforpython-6/).
 

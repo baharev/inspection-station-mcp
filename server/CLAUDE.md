@@ -1,37 +1,68 @@
 # Inspection MCP server
 
-An MCP server (Model Context Protocol, the standard way to plug tools, data and devices
-into an AI application such as Claude Code) that lets the AI take photos with a camera,
-look closer at part of a photo, and record inspection results. The safety rules are
-enforced in the server, not in the prompt. This folder holds the server, with its
-demo login server and a script for HTTPS certificates. Claude Code connects to it
-directly (the README shows how); the desktop app that uses it is in the folder
-`client` and never imports this code.
+The MCP server of this repository (the top-level `CLAUDE.md` says what MCP is and how the
+two programs relate): it lets the AI take photos with a camera, look closer at part of a
+photo, and record inspection results. The safety rules are enforced here, not in the
+prompt.
 
-## Environment
+## What is here
 
-- Python 3.13 or later (3.14 is the version tested; the tests also pass on 3.13), in a
-  virtual environment of its own:
-  `pip install -e ".[test]"`, then `pytest -q`. Add a dependency to `pyproject.toml` in
-  the same step as installing it. Never install into the system Python.
-- The fake camera (`CAMERA=fake`, or "Sample photos" in the camera list) serves the
-  photos in `samples/`; the tests draw their own. The camera is always chosen by a
-  person, never guessed: by its number in a list the server shows in a terminal
-  (`choice.py`; saved in `~/.config/inspection-server/settings.json`, changed with
-  `--choose-camera`), or with `CAMERA`, which comes first. What is saved is the camera's
-  name or path, never the number (numbers change when devices are plugged in): on Linux
-  a V4L2 webcam by its stable `/dev/v4l/by-id/` path; on Windows (through DirectShow) and
-  macOS (not tested yet) by its name, or its device path for two of the same model.
-  Without a person to answer the list (stdio, a service), the server stops and says why.
-  `python scripts/check_camera.py` lists the cameras with their values for `CAMERA`.
+- `inspection_server/`: the server (`server.py`), the cameras (`camera.py`), choosing the
+  camera and photo size (`choice.py`), the server window (`window.py`) and the live view
+  page (`live.html`); `scripts/`: the demo login server (`keycloak.sh`, podman), HTTPS
+  certificates, a camera check and the try-it script. Every file: the README's
+  [Files](README.md#files).
 - The server alone opens the camera: a background thread reads frames while photos or the
   live view (`/live`, with `--http`) are used, and releases the camera a minute later.
   Meanwhile no other program can open it; the live view replaces separate camera viewers.
-- The server window (`inspection-server-window`, `inspection_server/window.py`) runs
-  `inspection-server --http` as a separate program and shows its output; Stop ends it.
-  Tkinter is imported only there: the server never depends on the window, and a computer
-  without a screen never needs it. Its choices live in the same settings file.
-- Containers: podman (the demo login server, `scripts/keycloak.sh`).
+- The server window (`inspection-server-window`, `inspection_server/window.py`) runs the
+  server (`python -u -m inspection_server.server --http`) as a separate program, without
+  `CAMERA` and `CAMERA_SIZE` and with no terminal to answer, and shows its output; Stop
+  ends it. Tkinter is imported only there: the server never depends on the window, and a
+  computer without a screen never needs it. Its choices live in the server's settings
+  file, `~/.config/inspection-server/settings.json`, which the camera menu writes too
+  (`choice.py`).
+
+## Environment and tests
+
+- In this folder, in its own virtual environment: `.venv/bin/pip install -e ".[test,dev]"`,
+  then the checks the top-level `CLAUDE.md` lists. Install with `-e`: the server finds
+  `samples/` and keeps `logs/` next to its code.
+- Six of the twelve tests in `tests/test_window.py` open a window and are skipped without
+  a screen. After a change to `window.py`, run them: with `DISPLAY=:0` on a desktop
+  computer reached over SSH, or under `xvfb-run -a`, as the CI workflow does.
+- Most tests run in-process (`Client(server)`, or the HTTP app through an ASGI transport
+  in `tests/test_http.py`) against `FakeCamera` on photos they draw in a temporary folder,
+  so they need no hardware. `tests/conftest.py` keeps this computer's saved camera choice,
+  `CAMERA` and `CAMERA_SIZE` away from them.
+
+## Rules a change must not break
+
+- The camera is always chosen by a person, never guessed: by its number in a list the
+  server shows in a terminal, by its name in the server window's list, or with `CAMERA`
+  (and `CAMERA_SIZE`), which comes first in a terminal; the window removes both from the
+  server's environment, and `--choose-camera` refuses to run while either is set. What is
+  saved is the camera's name or path, never the number (numbers change when devices are
+  plugged in). Without a person to answer the list (stdio, a service), the server stops
+  and says why; a saved camera that is missing stops it too, never another camera. How it
+  works for the user: the README's [Choosing a camera](README.md#choosing-a-camera).
+- Every rule lives in the server: inputs validated, limits in code, a person confirms
+  every fail (a pass or an unsure is recorded without asking, on purpose), and every
+  action and every refusal by a rule is audit-logged (a malformed input or an unknown
+  photo ID is refused without a log line). The person's answer reaches
+  `record_inspection` only through `Resolve(confirm_fail)`, never as a tool argument the
+  AI could fill in. Tool annotations are hints for the host, not protection. The whole
+  list: the main README's
+  [rules](../README.md#the-tools-the-server-provides-and-the-rules-it-enforces) and
+  [guarantees](../README.md#what-the-server-can-and-cannot-guarantee).
+- Over HTTP, the SDK's `TokenVerifier` refuses a request without the secret key or a
+  login token only at `/mcp`; every other route checks for itself. The live view's page,
+  `/live`, holds no secrets and is open to anyone; its pictures, `/live/frame.jpg`, need a
+  key or token from other computers and none from the station computer itself
+  (`from_this_computer`). A new route checks the same way. Roles come from the token's
+  `roles` claim and are checked in each tool and in the live view.
+- Nothing may write to stdout in stdio mode: it carries the protocol. Messages for the
+  person go to stderr, records to the log files.
 
 ## How to write the code
 
@@ -42,25 +73,17 @@ directly (the README shows how); the desktop app that uses it is in the folder
   `mcp`. Check the installed package before guessing an API.
 - Protocol version 2026-07-28 is stateless: no handshake, no session. State that must
   survive between calls is an explicit handle passed as a tool argument (the photo ID).
-- Never `print()` in a stdio server: stdout carries the protocol. Log to a file.
-- Over HTTP, every request needs the secret key or a login token (the SDK's
-  `TokenVerifier`); roles come from the token's `roles` claim and are checked in each
-  tool. The key is in `~/.config/inspection-server/api-key` (made by the server at its
-  first start) unless `API_KEY` is set. The `claude mcp add` line the server prints reads
-  the file once and Claude Code keeps its own copy: after a new key, run the line again.
-  Claude Code sends login details only over HTTPS or to `localhost`.
-- Every rule lives in the server: inputs validated, limits in code, a human confirms
-  anything with consequences, everything audit-logged. Tool annotations are hints for the
-  host, not protection.
-- The simplest working version first; no features nobody asked for.
-- Tests with pytest, in-process (`Client(server)`), against the fake camera, so they run
-  without hardware.
+  The server also serves clients of the older versions (2025-11-25 and before), which keep
+  a session and ask the person during the tool call; keep both working. The tests of the
+  fail question run under both (`under_both_protocols` in `tests/test_server.py`), and a
+  new one should too.
 
-## Photos and text
+## Photos
 
 - Real camera photos go to `captures/` (git-ignored). Look at every photo before
-  committing it: a camera can catch people or a room. Keep sample photos at the camera's
-  full size; the detail is what the examples need.
+  committing it: a camera can catch people or a room. Keep sample photos at the size the
+  camera took them (1920x1080 here), never scaled down; the detail is what the examples
+  need.
 - No readable brand names in a committed photo: blur logos and makers' names, and check
-  the result in enlarged crops.
-- US English spelling.
+  the result in enlarged crops. Then show me each photo and its crops: I approve every
+  photo before it is committed.

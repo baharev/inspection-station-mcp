@@ -302,9 +302,16 @@ async def test_unsure_is_recorded_and_says_a_person_should_look(server):
 
 # --- record_inspection: a fail needs a person's yes, else it is unsure -------------
 
-async def test_fail_is_recorded_when_the_human_says_yes(server, tmp_path):
+# The newer protocol asks the person between two calls of the tool, the older one during
+# the call: each outcome is checked under both.
+under_both_protocols = pytest.mark.parametrize(
+    "mode", ["auto", "legacy"], ids=["protocol 2026-07-28", "older protocol"])
+
+
+@under_both_protocols
+async def test_fail_is_recorded_when_the_human_says_yes(server, tmp_path, mode):
     operator = human("yes")
-    async with Client(server, elicitation_callback=operator) as client:
+    async with Client(server, mode=mode, elicitation_callback=operator) as client:
         image_id = await take_photo(client)
         result = await client.call_tool(
             "record_inspection", record(image_id, "fail", findings="Pack torn at the top."))
@@ -327,9 +334,10 @@ async def test_fail_is_recorded_when_the_human_says_yes(server, tmp_path):
 @pytest.mark.parametrize("answer, confirmation", [
     ("no", "no"), ("untouched", "no"), ("decline", "declined"), ("cancel", "no answer"),
 ], ids=["says no", "leaves the box unticked", "refuses to answer", "closes the dialog"])
+@under_both_protocols
 async def test_fail_without_a_yes_is_recorded_as_unsure(server, tmp_path, answer,
-                                                         confirmation):
-    async with Client(server, elicitation_callback=human(answer)) as client:
+                                                         confirmation, mode):
+    async with Client(server, mode=mode, elicitation_callback=human(answer)) as client:
         image_id = await take_photo(client)
         result = await client.call_tool("record_inspection", record(image_id, "fail"))
     assert not result.is_error
@@ -351,7 +359,7 @@ async def test_human_is_not_asked_about_an_invalid_fail(server):
 ASKING = "fail proposed, asking the person"
 
 
-@pytest.mark.parametrize("mode", ["auto", "legacy"], ids=["protocol 2026-07-28", "older protocol"])
+@under_both_protocols
 async def test_asking_the_person_is_logged_once(server, tmp_path, mode):
     # In the newer protocol, the question and its answer are two calls of the tool.
     async with Client(server, mode=mode, elicitation_callback=human("yes")) as client:
@@ -363,7 +371,7 @@ async def test_asking_the_person_is_logged_once(server, tmp_path, mode):
     assert sum(ASKING in line for line in log_lines(tmp_path, "audit.log")) == 1
 
 
-@pytest.mark.parametrize("mode", ["auto", "legacy"], ids=["protocol 2026-07-28", "older protocol"])
+@under_both_protocols
 async def test_a_fail_from_an_application_that_cannot_ask_is_recorded_as_unsure(
         server, tmp_path, mode):
     async with Client(server, mode=mode) as client:   # no way to show a question

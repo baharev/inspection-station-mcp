@@ -7,7 +7,7 @@ name = "inspection-mcp-client"
 version = "1.0.0"
 description = "A desktop window where Claude inspects parts with a camera through MCP, and a person confirms every fail"
 license = "MIT"
-requires-python = ">=3.13"   # tested with 3.14; the tests pass with 3.13 too
+requires-python = ">=3.13"   # tested with 3.13 and 3.14 on Linux and Windows
 dependencies = [
     "mcp>=2.3,<3",
     "anthropic>=1.15,<2",

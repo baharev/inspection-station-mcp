@@ -7,7 +7,7 @@ name = "inspection-mcp-server"
 version = "1.0.0"
 description = "An MCP server that lets an AI application take photos with a camera and record inspection results"
 license = "MIT"
-requires-python = ">=3.13"   # tested with 3.14 on Linux and Windows; the tests pass with 3.13 too
+requires-python = ">=3.13"   # tested with 3.13 and 3.14 on Linux and Windows
 dependencies = [
     "mcp>=2.3,<3",
     "pydantic>=2.14,<3",

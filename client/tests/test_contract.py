@@ -1,6 +1,6 @@
 """The stand-in server against the real one: the app's other tests run against the
 stand-in, so it must offer what the real inspection server offers, as far as the app
-depends on it (the list in CLAUDE.md).
+depends on it (the MCP part of the list in CLAUDE.md).
 
 Skipped unless the real server (folder server) is installed in the same environment: the
 app never imports it, and its other tests never need it.

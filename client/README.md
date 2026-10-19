@@ -2,7 +2,7 @@
 
 The desktop app of [Inspection Station MCP](../README.md): a window where Claude inspects parts with the camera of the inspection server, in the folder [`server`](../server/README.md). You type a question, such as "Is the tool tray complete?". Claude takes a photo, looks closer where it needs to, answers, and can record the result. The window shows each step with its pictures, and the camera's live picture next to it. When Claude proposes a fail, a dialog asks you first, with the photo; no part is marked as failed without your approval.
 
-The app runs its own loop between Claude, through Anthropic's API, and the inspection server, through MCP: about 1,250 lines of Python, using the official MCP and Anthropic libraries. This README is the reference for installing and running it. What the project is for, the quick start, Claude's answers and the rules are in the [main README](../README.md).
+The app runs its own loop between Claude, through Anthropic's API, and the inspection server, through MCP, using the official MCP and Anthropic libraries. This README is the reference for installing and running it. What the project is for, the quick start, Claude's answers and the rules are in the [main README](../README.md).
 
 ## Contents
 
