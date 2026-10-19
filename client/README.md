@@ -38,7 +38,7 @@ Each answer ends with what the question cost, and below the conversation the win
 
 ## Installing
 
-Python 3.13+. The app has never been tested on macOS; it should work there too. The commands are for Linux, and should work the same in the macOS Terminal; for PowerShell, see [On Windows](#on-windows).
+Python 3.13+. The app's automatic tests pass on macOS, but nobody has run it on a Mac; it should work there too. The commands are for Linux, and should work the same in the macOS Terminal; for PowerShell, see [On Windows](#on-windows).
 
 The app and the inspection server are separate programs. The app talks to the server only over the network, through MCP, even when both run on one computer; it needs no part of the server installed beside it. So each has a Python environment of its own: the server's is made as [its README](../server/README.md#installing) describes, and the app's as below. There are two ways to make the app's environment; use one of them, not both:
 
@@ -46,6 +46,12 @@ The app and the inspection server are separate programs. The app talks to the se
 - [With conda](#with-conda), if you use Miniconda or Anaconda, which bring their own Python. Conda keeps the environment in a place of its own and you call it by its name, `inspection-client`.
 
 On Linux, the window needs the system library `libxcb-cursor0`, which the desktop installs of Ubuntu and Xubuntu leave out. Without it, on a desktop that uses X11, such as Xubuntu's, the app stops at once with the message "xcb-cursor0 or libxcb-cursor0 is needed to load the Qt xcb platform plugin". On Ubuntu and Debian, install it once with `sudo apt install libxcb-cursor0`.
+
+If the install or the tests fail with the newest versions of the packages the app uses, install the exact versions the tests passed with, listed in `constraints.txt`, instead:
+
+```bash
+pip install -e ".[test]" -c constraints.txt
+```
 
 ### With a virtual environment
 
@@ -200,6 +206,7 @@ The tests were tested too: 12 bugs were planted in the code by hand, one at a ti
 - `inspection_client/login.py`: the login in the browser (the MCP SDK does the rest)
 - `tests/test_station.py`: the loop, against stand-ins for the inspection server and for Claude
 - `tests/stand_in_server.py`: the stand-in for the inspection server: the same tools, as any inspection server offers them over MCP
+- `tests/test_contract.py`: the stand-in compared with the real inspection server; it runs only where the server is installed too, and is skipped otherwise
 - `tests/test_login.py`: the app's part of the login, with a stand-in for the browser
 - `tests/test_window.py`: the conversation in the window (MCP messages only when asked for, pictures and links, your answer to a fail question), the live view's "try again", and the status line checked again once the live view is back
 - `tests/test_dialog.py`: the confirmation dialog: Enter never marks a part as failed
@@ -207,5 +214,6 @@ The tests were tested too: 12 bugs were planted in the code by hand, one at a ti
 - `tests/conftest.py`: what several test files share: HTTP to stand-ins, never the network
 - `docs/test-quality.md`: how the tests were checked, with bugs planted on purpose
 - `docs/app-main.png`, `docs/app-dialog.png`: the screenshots in this README
+- `constraints.txt`: the exact versions of the packages the tests passed with
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) version 2.3.0, the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python) version 1.15.0, and [PySide6](https://doc.qt.io/qtforpython-6/) (Qt for Python) version 6.12.0, its essential modules only (the package `PySide6-Essentials`).

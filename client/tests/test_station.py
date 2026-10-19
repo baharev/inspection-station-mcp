@@ -21,9 +21,20 @@ from mcp.server.mcpserver import Elicit, Resolve
 from pydantic import BaseModel
 
 from inspection_client.app import result_in_words
-from inspection_client.station import (SERVER_KEY_FILE, Answer, Done, KeyAuth, McpMessage, Note,
-                                        Question, Station, ToolCall, ToolResult, server_client,
-                                        live_view)
+from inspection_client.station import (
+    SERVER_KEY_FILE,
+    Answer,
+    Done,
+    KeyAuth,
+    McpMessage,
+    Note,
+    Question,
+    Station,
+    ToolCall,
+    ToolResult,
+    live_view,
+    server_client,
+)
 from stand_in_server import stand_in_server
 
 pytestmark = pytest.mark.anyio
@@ -348,7 +359,7 @@ def accepted_by_claude(messages) -> str:
     """What the API would refuse in this conversation, or "" if nothing."""
     if [m["role"] for m in messages] != ["user", "assistant"] * (len(messages) // 2) + ["user"]:
         return f"roles out of turn: {[m['role'] for m in messages]}"
-    for asked, answered in zip(messages[1::2], messages[2::2]):
+    for asked, answered in zip(messages[1::2], messages[2::2], strict=True):
         calls = [b["id"] for b in asked["content"] if b["type"] == "tool_use"]
         results = [b["tool_use_id"] for b in answered["content"]
                    if isinstance(b, dict) and b["type"] == "tool_result"]

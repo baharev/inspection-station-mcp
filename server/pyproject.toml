@@ -1,20 +1,22 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "inspection-mcp-server"
-version = "0.1.0"
+version = "1.0.0"
 description = "An MCP server that lets an AI application take photos with a camera and record inspection results"
 license = "MIT"
 requires-python = ">=3.13"   # tested with 3.14 on Linux and Windows; the tests pass with 3.13 too
 dependencies = [
-    "mcp==2.3.0",
-    "pyjwt[crypto]",
-    "uvicorn",
-    "opencv-python-headless",
-    "pillow",
-    "cv2-enumerate-cameras==1.4.0; sys_platform == 'win32' or sys_platform == 'darwin'",  # lists cameras by name
+    "mcp>=2.3,<3",
+    "pydantic>=2.14,<3",
+    "starlette>=1.8,<2",
+    "pyjwt[crypto]>=2.15,<3",
+    "uvicorn>=0.54,<1",
+    "opencv-python-headless>=5.0,<6",
+    "pillow>=12.3,<13",
+    "cv2-enumerate-cameras>=1.4,<2; sys_platform == 'win32' or sys_platform == 'darwin'",  # lists cameras by name
 ]
 
 [project.scripts]
@@ -24,7 +26,8 @@ inspection-server = "inspection_server.server:main"
 inspection-server-window = "inspection_server.window:main"
 
 [project.optional-dependencies]
-test = ["pytest", "anyio"]
+test = ["pytest>=9.1,<10", "anyio>=4.15,<5"]
+dev = ["ruff==0.17.1", "mypy==2.4.0"]
 
 [tool.setuptools]
 packages = ["inspection_server"]
@@ -33,3 +36,16 @@ package-data = { inspection_server = ["live.html"] }
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+files = ["inspection_server"]
+
+[[tool.mypy.overrides]]
+module = "cv2_enumerate_cameras"   # ships no type information
+ignore_missing_imports = true

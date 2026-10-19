@@ -1,17 +1,19 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "inspection-mcp-client"
-version = "0.1.0"
+version = "1.0.0"
 description = "A desktop window where Claude inspects parts with a camera through MCP, and a person confirms every fail"
 license = "MIT"
 requires-python = ">=3.13"   # tested with 3.14; the tests pass with 3.13 too
 dependencies = [
-    "mcp==2.3.0",
-    "anthropic==1.15.0",
-    "PySide6-Essentials==6.12.0",
+    "mcp>=2.3,<3",
+    "anthropic>=1.15,<2",
+    "httpx2>=2.13,<3",
+    "pydantic>=2.14,<3",
+    "PySide6-Essentials>=6.12,<7",
 ]
 
 [project.scripts]
@@ -19,7 +21,8 @@ inspection-client = "inspection_client.app:main"
 
 [project.optional-dependencies]
 # The tests need no camera server: they use a stand-in (tests/stand_in_server.py).
-test = ["pytest", "anyio", "pillow"]
+test = ["pytest>=9.1,<10", "anyio>=4.15,<5", "pillow>=12.3,<13"]
+dev = ["ruff==0.17.1", "mypy==2.4.0"]
 
 [tool.setuptools]
 packages = ["inspection_client"]
@@ -27,3 +30,13 @@ packages = ["inspection_client"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+src = [".", "tests"]   # tests/stand_in_server.py is imported as stand_in_server
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+files = ["inspection_client"]

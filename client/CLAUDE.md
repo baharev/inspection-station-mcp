@@ -22,8 +22,10 @@ server directly, as the server's README shows; nothing for it lives here.
   the fail dialog;
   `test_login.py`, the app's part of the login, with the browser and the login server
   played by the test; `test_main.py`, the start (which key or login, address and
-  certificates the parts get). `conftest.py` holds the `offline` fixture (HTTP to a
-  stand-in, never the network) and `anyio_backend` (asyncio).
+  certificates the parts get); `test_contract.py`, the stand-in compared with the real
+  server, skipped unless the server is installed in the same environment. `conftest.py`
+  holds the `offline` fixture (HTTP to a stand-in, never the network) and
+  `anyio_backend` (asyncio).
 - The app and the server are separate programs: the app never imports the server's
   code, so the server could be rewritten in another language without changing the app.
   What they share is the MCP interface, which the stand-in server must follow:

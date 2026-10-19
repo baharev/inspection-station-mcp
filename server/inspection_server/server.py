@@ -137,7 +137,7 @@ class Confirmation(BaseModel):
 # show questions, as in claude -p), "no answer" (closed without answering), "cannot ask"
 # (the AI application said it cannot show questions, so nobody was asked).
 FailConfirmation = Literal["not asked", "yes", "no", "declined", "no answer", "cannot ask"]
-CANNOT_ASK = "cannot ask"
+CANNOT_ASK: FailConfirmation = "cannot ask"
 
 
 class InspectionRecord(BaseModel):
@@ -254,9 +254,11 @@ def create_server(camera, data_dir: str | Path = SERVER_DIR, *, auth: AuthSettin
             return "local", ALL_ROLES
         claims = token.claims or {}
         roles = claims.get("roles", [])
+        name = claims.get("preferred_username")
+        if not isinstance(name, str) or not name:
+            name = token.subject or "unknown"   # both verifiers set the subject
         # A list only: in a text such as "trainee-viewer", "viewer" would be found too.
-        return (claims.get("preferred_username") or token.subject,
-                roles if isinstance(roles, list) else [])
+        return name, roles if isinstance(roles, list) else []
 
     # Never print() in a stdio server: stdout carries the protocol. Logs go to files.
     def audit(text: str) -> None:
@@ -364,7 +366,8 @@ def create_server(camera, data_dir: str | Path = SERVER_DIR, *, auth: AuthSettin
         left: Annotated[Fraction, Field(description="Left edge, 0 = left side of the photo")],
         top: Annotated[Fraction, Field(description="Top edge, 0 = top of the photo")],
         width: Annotated[Fraction, Field(description="Width, as a fraction of the photo's width")],
-        height: Annotated[Fraction, Field(description="Height, as a fraction of the photo's height")],
+        height: Annotated[Fraction,
+                          Field(description="Height, as a fraction of the photo's height")],
     ) -> Annotated[CallToolResult, ZoomInfo]:
         """Look closer: crop a rectangle of an earlier photo and return it enlarged.
 
@@ -407,7 +410,7 @@ def create_server(camera, data_dir: str | Path = SERVER_DIR, *, auth: AuthSettin
     async def live_page(request: Request) -> Response:
         return HTMLResponse(LIVE_PAGE.read_text(encoding="utf-8"))
 
-    watching = {}   # viewer name: when they last got a frame
+    watching: dict[str, float] = {}   # viewer name: when they last got a frame
 
     @mcp.custom_route("/live/frame.jpg", methods=["GET"])
     async def live_frame(request: Request) -> Response:
@@ -478,7 +481,8 @@ def create_server(camera, data_dir: str | Path = SERVER_DIR, *, auth: AuthSettin
         """
         require(INSPECTOR, "record_inspection")
         check_record(image_id)
-        confirmation, recorded = "not asked", verdict
+        confirmation: FailConfirmation = "not asked"
+        recorded = verdict
         if verdict == "fail":
             if not isinstance(answer, AcceptedElicitation):
                 confirmation = "declined" if answer.action == "decline" else "no answer"
@@ -511,7 +515,8 @@ def create_server(camera, data_dir: str | Path = SERVER_DIR, *, auth: AuthSettin
     return mcp
 
 
-def http_app(server: MCPServer, data_dir: str | Path = SERVER_DIR, host: str = "127.0.0.1") -> Starlette:
+def http_app(server: MCPServer, data_dir: str | Path = SERVER_DIR,
+             host: str = "127.0.0.1") -> Starlette:
     """The server over HTTP, with the refused requests in the audit log."""
     app = server.streamable_http_app(host=host)
     app.add_middleware(LogRefusals, logs=Path(data_dir) / "logs")
@@ -522,7 +527,8 @@ def key_auth(key: str) -> dict:
     """Settings for create_server: every request must carry the secret key."""
     # The SDK's token check needs an issuer URL; with a fixed key nobody issues tokens,
     # and without resource_server_url the URL is never published.
-    return {"auth": AuthSettings(issuer_url="http://localhost", resource_server_url=None),
+    return {"auth": AuthSettings.model_validate({"issuer_url": "http://localhost",
+                                                 "resource_server_url": None}),
             "token_verifier": ApiKeyVerifier(key)}
 
 
@@ -541,7 +547,8 @@ def secret_key(path: Path = KEY_FILE) -> str:
             try:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 # Readable by this user only (Linux and macOS):
-                with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                with os.fdopen(os.open(path, flags, 0o600), "w") as f:
                     f.write(secrets.token_urlsafe(32) + "\n")
             except OSError as err:
                 sys.exit(f"Cannot make the key file {path} ({err}). Set API_KEY instead.")
@@ -595,8 +602,11 @@ def oauth_auth(issuer: str, server_url: str, signing_key=None) -> dict:
         issuer = named   # its tokens name it exactly so, with or without a slash at the end
     # resource_server_url publishes, for clients such as Claude Code, which login server
     # to use. The verifier checks that a token was issued for this server (its audience).
-    return {"auth": AuthSettings(issuer_url=issuer, resource_server_url=server_url,
-                                 validate_token_resource=False),
+    # The addresses go in as text: the SDK keeps them as written, while pydantic's
+    # AnyHttpUrl("https://host") would add a slash, and issuers are compared exactly.
+    return {"auth": AuthSettings.model_validate({"issuer_url": issuer,
+                                                 "resource_server_url": server_url,
+                                                 "validate_token_resource": False}),
             "token_verifier": JwtVerifier(issuer, server_url, signing_key)}
 
 
@@ -649,12 +659,12 @@ def next_steps(host: str, port: int, scheme: str, key_file: bool,
 
 def main() -> None:
     args = arguments()
+    data_dir = server_folder("DATA_DIR", SERVER_DIR, "its photos and logs")
     # The menu needs a person at a terminal. Over stdio, the terminal carries the protocol:
     # there, the menu is shown only with --choose-camera, and the server then stops.
     choice = camera_choice.for_start(
         args.choose_camera, can_ask=sys.stdin.isatty() and (args.http or args.choose_camera))
     camera = open_camera(choice)
-    data_dir = os.environ.get("DATA_DIR", SERVER_DIR)
     if args.choose_camera and not args.http:
         return   # chosen and saved: Claude Code starts the server with it from now on
     if not args.http:
@@ -682,11 +692,26 @@ def arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def server_folder(setting: str, default: Path, what: str) -> str | Path:
+    """The folder a setting names, else its default in the server folder. Installed without
+    -e, the server has no folder of its own (pip copies only the program): it stops."""
+    if folder := os.environ.get(setting):
+        return folder
+    if not (SERVER_DIR / "pyproject.toml").is_file():
+        sys.exit(f"The server keeps {what} in its own folder, but it was installed without "
+                 "-e, which copies only the program. Remove that copy with "
+                 '"pip uninstall inspection-mcp-server", then install it again with '
+                 '"pip install -e ." in the server folder. '
+                 f"(Or set {setting} to the folder to use.)")
+    return default
+
+
 def open_camera(choice: camera_choice.Choice) -> FakeCamera | RealCamera:
     """The camera chosen; a real one is checked now, not at the first photo, so whoever
     starts the server sees why it cannot work."""
     if choice.device == camera_choice.FAKE:
-        return FakeCamera(os.environ.get("SAMPLES_DIR", SERVER_DIR / "samples"))
+        return FakeCamera(server_folder("SAMPLES_DIR", SERVER_DIR / "samples", "the sample photos"))
+    assert choice.size is not None   # camera_choice.for_start gives a real camera its size
     camera = RealCamera(choice.device, choice.size)
     try:
         camera.check()

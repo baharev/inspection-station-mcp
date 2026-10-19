@@ -17,7 +17,7 @@ The demo illustrates:
 - **Logins with roles, or a shared key.** With OAuth logins and a demo login server, each person has a role: a viewer may take photos, an inspector may also record results. A shared secret key is the simpler alternative, and Claude Code can also start the server by itself, with neither ([ways to run it](#other-ways-to-run-it)).
 - **A desktop app with its own Claude agent loop.** The app uses the Anthropic API and can display every MCP message exchanged during an inspection ([the app](client/README.md)).
 - **The AI's actual responses, mistakes included.** See what the AI got right and wrong, and how the demo's architecture can be extended to a production plant ([inspecting the sample photos](#inspecting-the-sample-photos-verdicts-and-mistakes), [from this demo to a plant](#from-this-demo-to-a-plant)).
-- **Tests that were themselves tested.** Bugs were planted in the code by hand, one at a time, to check that the tests catch them, and every gap found got a new test ([reading the code](#reading-the-code)). The system has been tested on Linux and Windows, including with a real webcam.
+- **Tests that were themselves tested.** Bugs were planted in the code by hand, one at a time, to check that the tests catch them, and every gap found got a new test ([reading the code](#reading-the-code)). The system has been tested on Linux and Windows, including with a real webcam; its automatic tests also pass on macOS.
 
 **Author:** [Ali Baharev](https://baharev.info/).
 
@@ -57,7 +57,7 @@ Other configurations, including running the server and client on separate comput
 
 ### On Linux or macOS
 
-macOS has never been tested, but the code follows the documented interfaces of its dependencies and should work there too.
+The automatic tests pass on macOS, but nobody has run the programs on a Mac with a real camera; the code follows the documented interfaces of its dependencies and should work there too.
 
 On Ubuntu and Debian, install the virtual-environment package for your Python version first, if needed, for example for Python 3.13:
 
@@ -521,7 +521,7 @@ Fix the model version and the inspection setup used for the validation. A new mo
 
 ## Reading the code
 
-The two programs are about 3,000 lines of Python, counting comments and blank lines but not the tests: the server about 1,700, with 164 tests, the app about 1,250, with 62. The MCP ideas live in about 400 of those lines. A reading order:
+The two programs are about 3,000 lines of Python, counting comments and blank lines but not the tests: the server about 1,700, with 166 tests, the app about 1,350, with 66. The MCP ideas live in about 400 of those lines. A reading order:
 
 1. `client/tests/stand_in_server.py`: a small server with the same three tools that the app's tests run against; the shortest example of a tool that asks the person a question.
 2. `server/scripts/try_tools.py`: a whole MCP client in one page, calling the real server's tools without an AI.
@@ -533,7 +533,7 @@ Safe to skip at first: the server window (`window.py`), choosing the camera (`ch
 
 The server speaks MCP protocol version 2026-07-28, which keeps no session: there, the server's question for the person comes back as the tool call's result, with the server's state sealed inside it, and the call is sent again with the answer. It also serves clients of the older version 2025-11-25, which keeps a session and asks during the call. The app's "Show MCP messages" checkbox shows the messages' contents as the app sent and received them, with the pictures and the sealed state shortened.
 
-The tests were tested too: bugs were planted in the code by hand, one at a time, each breaking a rule the way a developer could really get it wrong, and each gap they found got a test. See [the server's](server/docs/test-quality.md) and [the app's](client/docs/test-quality.md) record of it. There are about as many lines of tests as of code: the server's 1,207 lines of code have 1,192 lines of tests (0.99 lines of tests per line of code), and the app's 927 lines have 870 (0.94). These count only lines with code on them: no blank lines, comments or docstrings, and not the two scripts in `server/scripts`.
+The tests were tested too: bugs were planted in the code by hand, one at a time, each breaking a rule the way a developer could really get it wrong, and each gap they found got a test. See [the server's](server/docs/test-quality.md) and [the app's](client/docs/test-quality.md) record of it. There are about as many lines of tests as of code: the server's 1,235 lines of code have 1,234 lines of tests (1.00 lines of tests per line of code), and the app's 1,004 lines have 949 (0.95). These count only lines with code on them: no blank lines, comments or docstrings, and not the two scripts in `server/scripts`.
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) 2.3.0, the [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python) and [PySide6](https://doc.qt.io/qtforpython-6/).
 

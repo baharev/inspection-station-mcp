@@ -10,6 +10,7 @@ size of its photos, and whether other computers may connect (the server's --host
 0.0.0.0). Logins and HTTPS stay on the command line.
 """
 
+import contextlib
 import hashlib
 import os
 import queue
@@ -24,8 +25,9 @@ from pathlib import Path
 try:
     import tkinter as tk
     from tkinter import messagebox, ttk
+    HAVE_TK = True
 except ImportError:   # Linux distributions ship it separately; main() says so
-    tk = None
+    HAVE_TK = False
 
 from inspection_server import choice as camera_choice
 from inspection_server.camera import CameraError, camera_sizes, size_text, suggested_size
@@ -125,22 +127,21 @@ def make_shortcut() -> Path:
     # GNOME's mark, and Xfce's (the file's checksum, so a changed file is not trusted).
     checksum = hashlib.sha256(path.read_bytes()).hexdigest()
     for mark, value in (("trusted", "true"), ("xfce-exe-checksum", checksum)):
-        try:
+        with contextlib.suppress(OSError):
             subprocess.run(["gio", "set", str(path), f"metadata::{mark}", value],
                            capture_output=True)
-        except OSError:
-            pass
     return path
 
 
 class Window:
     def __init__(self, root: "tk.Tk"):
         self.root = root
-        self.process = None        # the server, while it runs
-        self.port_taken = False    # it said its port is taken
-        self.lines = queue.Queue()  # what it says, from the thread that reads it
-        self.entries = []          # the camera list, as (setting, name)
-        self.sizes = None          # the chosen camera's photo sizes, once listed
+        self.process: subprocess.Popen[str] | None = None   # the server, while it runs
+        self.port_taken = False                              # it said its port is taken
+        # What it says, from the thread that reads it (None: it ended):
+        self.lines: queue.Queue[tuple[subprocess.Popen[str], str | None]] = queue.Queue()
+        self.entries: list[tuple[str, str]] = []             # the camera list, as (setting, name)
+        self.sizes: list[tuple[int, int]] | None = None      # the camera's photo sizes, once listed
         root.title(TITLE)
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
@@ -236,29 +237,29 @@ class Window:
         self.size.set("")
         self.note["text"] = ""
         size = None
-        if device != camera_choice.FAKE and self.list_sizes():
-            size = suggested_size(self.sizes)
-            self.size.current(self.sizes.index(size))
+        if device != camera_choice.FAKE and (sizes := self.list_sizes()):
+            size = suggested_size(sizes)
+            self.size.current(sizes.index(size))
             self.note["text"] = (f"Photo size {size_text(size)} suggested: larger photos show "
                                  "more detail when the AI zooms in, but the live view shows "
                                  "fewer pictures a second. Change it in the list if you like.")
         camera_choice.save(camera_choice.Choice(device, name, "", size))
         self.update_buttons()
 
-    def list_sizes(self) -> bool:
-        """Lists the chosen camera's photo sizes, once; False if they cannot be read."""
+    def list_sizes(self) -> list[tuple[int, int]] | None:
+        """Lists the chosen camera's photo sizes, once; None if they cannot be read."""
         if self.sizes is not None:
-            return True
+            return self.sizes
         device = self.entries[self.camera.current()][0]
         if device == camera_choice.FAKE:
-            return False
+            return None
         self.root.config(cursor="watch")
         self.root.update_idletasks()
         try:
             sizes = camera_sizes(device)
         except CameraError as err:
             self.note["text"] = str(err)
-            return False
+            return None
         finally:
             self.root.config(cursor="")
         self.sizes = sizes
@@ -267,10 +268,11 @@ class Window:
         self.size["values"] = [size_text(s) + (" (suggested)" if s == suggested else "")
                                for s in sizes]
         self.size.set(shown)
-        return True
+        return sizes
 
     def size_chosen(self, event=None) -> None:
         device, name = self.entries[self.camera.current()]
+        assert self.sizes is not None   # a size is chosen from the listed ones
         size = self.sizes[self.size.current()]
         camera_choice.save(camera_choice.Choice(device, name, "", size))
         self.note["text"] = ""
@@ -311,7 +313,8 @@ class Window:
         self.port_taken = False
         self.update_buttons()
 
-    def read_output(self, process: subprocess.Popen) -> None:
+    def read_output(self, process: subprocess.Popen[str]) -> None:
+        assert process.stdout is not None   # started with stdout=PIPE
         for line in process.stdout:
             self.lines.put((process, line))
         self.lines.put((process, None))   # it ended
@@ -346,6 +349,7 @@ class Window:
 
     def stop(self) -> None:
         process, self.process = self.process, None
+        assert process is not None   # called only while it runs
         process.terminate()
         try:
             process.wait(timeout=5)
@@ -389,7 +393,7 @@ def show_error(kind, error, trace) -> None:
 
 
 def main() -> None:
-    if tk is None:
+    if not HAVE_TK:
         sys.exit("This Python has no Tkinter, which the window needs. On Ubuntu and Debian: "
                  f"sudo apt install python{sys.version_info.major}.{sys.version_info.minor}-tk")
     if sys.platform == "win32":   # sharp text on screens scaled above 100 %

@@ -23,7 +23,8 @@ class CameraError(Exception):
 def _enumerate():
     """Windows and macOS: the cameras with their names, through cv2-enumerate-cameras."""
     if sys.platform not in ("win32", "darwin"):
-        raise CameraError("Real cameras work on Linux, Windows and macOS only; use CAMERA=fake here.")
+        raise CameraError(
+            "Real cameras work on Linux, Windows and macOS only; use CAMERA=fake here.")
     import cv2
     from cv2_enumerate_cameras import enumerate_cameras
     # Windows: DirectShow. The OpenCV wheels for Windows (4.14, 5.0) leave out Media
@@ -61,8 +62,8 @@ def size_text(size: tuple[int, int]) -> str:
 
 def camera_sizes(device: str) -> list[tuple[int, int]]:
     """The photo sizes the camera offers, largest first, from MIN_WIDTH pixels across."""
-    sizes = _linux_sizes(device) if sys.platform == "linux" else _probed_sizes(device)
-    sizes = {s for s in sizes if s[0] >= MIN_WIDTH}
+    found = _linux_sizes(device) if sys.platform == "linux" else _probed_sizes(device)
+    sizes = {s for s in found if s[0] >= MIN_WIDTH}
     if not sizes:
         raise CameraError(f"The camera {device} offers no photo size of at least {MIN_WIDTH} "
                           "pixels across.")
@@ -156,7 +157,8 @@ def _linux_name(path: Path) -> str:
 
     removable = Path(f"/sys/class/video4linux/{path.resolve().name}/device/../removable")
     where = {"fixed": "built in", "removable": "plugged in"}.get(
-        removable.read_text().strip() if removable.exists() else "", "built in or plugged in: unknown")
+        removable.read_text().strip() if removable.exists() else "",
+        "built in or plugged in: unknown")
     return f"{text('ID_VENDOR')} {text('ID_MODEL')} ({where})".strip()
 
 
@@ -178,14 +180,14 @@ class RealCamera:
     def __init__(self, device: str, size: tuple[int, int] = (1280, 720), idle: float = 60):
         self.device, self.size, self.idle = device, size, idle
         self._lock = threading.Condition()
-        self._reader = None     # the thread reading the camera, while it is open
+        self._reader: threading.Thread | None = None   # reads the camera while it is open
         self._frame = None      # the latest frame, as OpenCV gives it (BGR)
         self._time = 0.0        # when it arrived
         self._count = 0         # frames read since the camera was opened
         self._error = ""        # why the reader stopped, if it failed
         self._failed = 0.0      # when
         self._last_use = 0.0
-        self._rate = None       # frames a second the camera sends, once measured
+        self._rate: float | None = None   # frames a second the camera sends, once measured
 
     def _open(self):
         import cv2  # only needed with real hardware
@@ -226,7 +228,7 @@ class RealCamera:
                                   "or is another program using it?")
             camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.size[0])
             camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.size[1])
-            times = []   # when the last frames arrived, to measure the rate
+            times: list[float] = []   # when the last frames arrived, to measure the rate
             while True:
                 with self._lock:
                     if time.monotonic() - self._last_use > self.idle:
@@ -303,7 +305,7 @@ class FakeCamera:
 
     def __init__(self, folder: str | Path):
         self.folder = Path(folder)
-        self._photos = None
+        self._photos: list[Path] | None = None
         self._next = 0
         self._lock = threading.Lock()
 

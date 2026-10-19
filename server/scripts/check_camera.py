@@ -18,8 +18,15 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from inspection_server.camera import (CameraError, RealCamera, camera_sizes, list_cameras,
-                                      parse_size, size_text, suggested_size)
+from inspection_server.camera import (
+    CameraError,
+    RealCamera,
+    camera_sizes,
+    list_cameras,
+    parse_size,
+    size_text,
+    suggested_size,
+)
 
 
 def sizes(device: str) -> str:

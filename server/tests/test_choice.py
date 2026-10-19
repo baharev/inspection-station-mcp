@@ -5,6 +5,7 @@ start-up instructions.
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -178,7 +179,8 @@ def test_a_chosen_camera_that_is_unplugged_stops_the_server_with_what_to_do(tmp_
     monkeypatch.setattr("sys.argv", ["inspection-server", "--http"])
     with pytest.raises(SystemExit) as stop:
         main()
-    assert "The camera chosen earlier, Old Webcam (plugged in), cannot be found" in str(stop.value.code)
+    assert ("The camera chosen earlier, Old Webcam (plugged in), cannot be found"
+            in str(stop.value.code))
     assert "--choose-camera" in str(stop.value.code)
 
 
@@ -190,6 +192,40 @@ def test_choosing_the_camera_without_http_does_not_start_the_server(monkeypatch)
     main()   # chosen and saved: Claude Code starts the server with it later
 
 
+@pytest.fixture
+def installed_without_e(tmp_path, monkeypatch):
+    """The server as pip install without -e leaves it: its folder is site-packages, with no
+    pyproject.toml, no samples and no place for photos and logs."""
+    monkeypatch.setattr("inspection_server.server.SERVER_DIR", tmp_path / "site-packages")
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.delenv("SAMPLES_DIR", raising=False)
+    monkeypatch.setenv("CAMERA", choice.FAKE)
+    monkeypatch.setattr("sys.argv", ["inspection-server"])
+
+
+@pytest.mark.usefixtures("server_must_not_start", "installed_without_e")
+def test_installed_without_e_the_server_stops_and_says_how_to_install_it(monkeypatch):
+    for setting in ("DATA_DIR", "SAMPLES_DIR"):   # the photos and logs first, then the samples
+        with pytest.raises(SystemExit) as stop:
+            main()
+        assert ('Remove that copy with "pip uninstall inspection-mcp-server", then install it '
+                'again with "pip install -e ." in the server folder.' in str(stop.value.code))
+        assert f"(Or set {setting} to the folder to use.)" in str(stop.value.code)
+        monkeypatch.setenv(setting, "somewhere")
+
+
+@pytest.mark.usefixtures("installed_without_e")
+def test_installed_without_e_the_server_starts_with_its_folders_set(tmp_path, monkeypatch):
+    started = []
+    monkeypatch.setattr("inspection_server.server.create_server",
+                        lambda camera, data_dir: SimpleNamespace(
+                            run=lambda: started.append((camera.folder, data_dir))))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SAMPLES_DIR", str(tmp_path / "photos"))
+    main()
+    assert started == [(tmp_path / "photos", str(tmp_path / "data"))]
+
+
 def test_the_start_shows_the_addresses_and_the_claude_code_command():
     lines = next_steps("0.0.0.0", 8000, "http", key_file=True, address="192.168.0.20")
     assert lines[:3] == [
@@ -198,9 +234,9 @@ def test_the_start_shows_the_addresses_and_the_claude_code_command():
         "with the secret key or a login",
         "MCP address: http://192.168.0.20:8000/mcp"]
     assert "copy the key file there first" in lines[3]
-    assert lines[4] == ("  Linux, macOS: claude mcp add -s local --transport http inspection-server "
-                        "http://192.168.0.20:8000/mcp --header \"Authorization: Bearer "
-                        "$(cat ~/.config/inspection-server/api-key)\"")
+    assert lines[4] == ("  Linux, macOS: claude mcp add -s local --transport http "
+                        "inspection-server http://192.168.0.20:8000/mcp --header "
+                        "\"Authorization: Bearer $(cat ~/.config/inspection-server/api-key)\"")
     assert lines[5].startswith("  PowerShell:   claude mcp add")
     assert lines[5].endswith("$(Get-Content $HOME\\.config\\inspection-server\\api-key)\"")
     assert lines[6].startswith("Warning: other computers connect over plain HTTP")

@@ -21,17 +21,56 @@ from urllib.parse import urlsplit, urlunsplit
 
 import anthropic
 from PySide6.QtCore import QObject, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import (QColor, QFontDatabase, QFontMetricsF, QImage, QPixmap,
-                           QTextBlockFormat, QTextCharFormat, QTextCursor, QTextDocument,
-                           QTextFormat, QTextLength)
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-                               QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton,
-                               QScrollArea, QSplitter, QTextBrowser, QVBoxLayout, QWidget)
+from PySide6.QtGui import (
+    QColor,
+    QFontDatabase,
+    QFontMetricsF,
+    QImage,
+    QPixmap,
+    QTextBlockFormat,
+    QTextCharFormat,
+    QTextCursor,
+    QTextDocument,
+    QTextFormat,
+    QTextLength,
+)
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .login import BrowserLogin
-from .station import (SERVER_KEY_FILE, CLAUDE_KEY_FILE, MODELS, Answer, Done, KeyAuth,
-                      McpMessage, Note, Question, Station, ToolCall, ToolResult, server_client,
-                      describe, live_view, read_key)
+from .station import (
+    CLAUDE_KEY_FILE,
+    MODELS,
+    SERVER_KEY_FILE,
+    Answer,
+    Done,
+    KeyAuth,
+    McpMessage,
+    Note,
+    Question,
+    Station,
+    ToolCall,
+    ToolResult,
+    describe,
+    live_view,
+    read_key,
+    server_client,
+)
 
 THUMBNAIL = 240      # width of a picture in the conversation, in pixels
 INDENT = 20          # Claude's work on a question is indented below it, in pixels
@@ -90,8 +129,8 @@ class Worker(QObject):
 
     async def ask_person(self, question: Question) -> bool | None:
         answered = self.loop.create_future()
-        self.confirm.emit(question,
-                          lambda answer: self.loop.call_soon_threadsafe(answered.set_result, answer))
+        self.confirm.emit(question, lambda answer:
+                          self.loop.call_soon_threadsafe(answered.set_result, answer))
         return await answered
 
 
@@ -169,7 +208,8 @@ class ConfirmDialog(QDialog):
     def __init__(self, parent, question: Question):
         super().__init__(parent)
         self.setWindowTitle("The inspection server asks you")
-        self.room = (parent.screen() if parent else QApplication.primaryScreen()).availableGeometry()
+        screen = parent.screen() if parent else QApplication.primaryScreen()
+        self.room = screen.availableGeometry()
         layout = QVBoxLayout(self)
         message = QLabel(question.message)
         message.setWordWrap(True)
@@ -231,7 +271,10 @@ class ConfirmDialog(QDialog):
 def in_words(call: ToolCall) -> str:
     """What Claude asked the server to do, in plain words."""
     a = call.arguments
-    percent = lambda x: f"{round(float(x) * 100)} %"
+
+    def percent(x) -> str:
+        return f"{round(float(x) * 100)} %"
+
     try:
         match call.name:
             case "capture_image":
@@ -253,8 +296,9 @@ class Window(QMainWindow):
         super().__init__()
         self.worker = worker
         self.server_url = server_url
-        self.pictures = []
-        self.entries = []   # everything shown in the conversation, to show it again
+        self.pictures: list[bytes] = []
+        # Everything shown in the conversation, as (content, kind, indent), to show it again:
+        self.entries: list[tuple[str, str, bool]] = []
         self.after_mcp = False   # the last thing shown is an MCP message, with its line below
         self.conversation_cost = 0.0
         self.started = 0.0
@@ -272,7 +316,7 @@ class Window(QMainWindow):
         self.new_button = QPushButton("New conversation")
         self.new_button.clicked.connect(self.new_conversation)
         self.model = QComboBox()
-        self.model.addItems(MODELS)
+        self.model.addItems(list(MODELS))
         self.show_mcp = QCheckBox("Show MCP messages")
         self.show_mcp.setToolTip("Also show the messages between this app and the camera "
                                  "server, as the Model Context Protocol sends them")
@@ -575,7 +619,7 @@ def main() -> None:
                              "authority in this file, such as the demo's certs/ca.pem")
     args = parser.parse_args()
 
-    verify = True
+    verify: bool | ssl.SSLContext = True   # or a context that trusts the certificate authority
     if args.trust:
         verify = ssl.create_default_context()
         try:
@@ -587,7 +631,9 @@ def main() -> None:
     claude = anthropic.AsyncAnthropic(api_key=read_key("ANTHROPIC_API_KEY", CLAUDE_KEY_FILE))
     station = Station(claude, lambda confirm: server_client(args.server, auth, confirm, verify))
     ready = (lambda: login.logged_in) if login else (lambda: True)
-    live = lambda show, tell: live_view(live_url(args.server), auth, show, tell, verify, ready)
+
+    def live(show, tell):
+        return live_view(live_url(args.server), auth, show, tell, verify, ready)
 
     app = QApplication(sys.argv)
     app.setApplicationName("Inspection client")

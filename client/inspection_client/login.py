@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider, TokenStorage
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from pydantic import AnyUrl
 
 CLIENT_ID = "inspection-client"
 CALLBACK_PORT = 33419   # the login server sends the browser back here, to this computer
@@ -54,14 +55,17 @@ class BrowserLogin(TokenStorage):
     def __init__(self, server_url: str, tell=print, open_page=webbrowser.open):
         self.tell = tell
         self.open_page = open_page
-        self.tokens = None
-        self.client = OAuthClientInformationFull(client_id=CLIENT_ID, redirect_uris=[CALLBACK],
+        self.tokens: OAuthToken | None = None
+        self.client = OAuthClientInformationFull(client_id=CLIENT_ID,
+                                                 redirect_uris=[AnyUrl(CALLBACK)],
                                                  token_endpoint_auth_method="none")
-        self.answer = None      # the login server's answer, while the login page is open
-        self.listener = None    # where the browser brings it
+        # The login server's answer, while the login page is open, and where the browser
+        # brings it:
+        self.answer: asyncio.Future[AuthorizationCodeResult] | None = None
+        self.listener: asyncio.Server | None = None
         self.auth = OAuthClientProvider(
             server_url,
-            OAuthClientMetadata(client_name="Inspection client", redirect_uris=[CALLBACK],
+            OAuthClientMetadata(client_name="Inspection client", redirect_uris=[AnyUrl(CALLBACK)],
                                 token_endpoint_auth_method="none"),
             self, redirect_handler=self.open_login_page, callback_handler=self.wait_for_login,
             validate_resource_url=self.same_address)
@@ -72,6 +76,8 @@ class BrowserLogin(TokenStorage):
 
     def who(self) -> str:
         """The user name in the token (read, not checked: the inspection server checks it)."""
+        if self.tokens is None:
+            return ""
         try:
             payload = self.tokens.access_token.split(".")[1]
             claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
@@ -127,24 +133,26 @@ class BrowserLogin(TokenStorage):
             self.listener = await asyncio.start_server(self.receive, "localhost", CALLBACK_PORT)
         except OSError as err:
             raise LoginFailed(f"port {CALLBACK_PORT} on this computer is busy "
-                              f"({err.strerror}); is the app running twice?")
+                              f"({err.strerror}); is the app running twice?") from err
         self.answer = asyncio.get_running_loop().create_future()
         self.tell("Log in in the browser window that opened.")
         await asyncio.to_thread(self.open_page, url)
 
     async def wait_for_login(self) -> AuthorizationCodeResult:
+        answer, listener = self.answer, self.listener
+        assert answer is not None and listener is not None   # set by open_login_page, just before
         try:
             async with asyncio.timeout(WAIT):
-                return await self.answer
+                return await answer
         except BaseException as err:
             # Forget the old token, so that no other request starts a login of its own.
             self.answer = self.tokens = None
             self.auth.context.clear_tokens()
             if isinstance(err, TimeoutError):
-                raise LoginFailed(f"no login within {WAIT // 60} minutes.")
+                raise LoginFailed(f"no login within {WAIT // 60} minutes.") from err
             raise
         finally:
-            self.listener.close()
+            listener.close()
 
     async def receive(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """The browser, sent back by the login server with the answer in the address."""

@@ -287,7 +287,8 @@ async def test_times_carry_their_offset_from_utc(server, tmp_path):
         image_id = await take_photo(client)
         await client.call_tool("record_inspection", record(image_id))
     [line] = log_lines(tmp_path, "inspections.jsonl")
-    for stamp in (json.loads(line)["time"], *(l.split()[0] for l in log_lines(tmp_path, "audit.log"))):
+    audit = log_lines(tmp_path, "audit.log")
+    for stamp in (json.loads(line)["time"], *(entry.split()[0] for entry in audit)):
         assert datetime.fromisoformat(stamp).utcoffset() is not None, stamp
 
 

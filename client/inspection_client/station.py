@@ -11,30 +11,56 @@ import base64
 import json
 import os
 import weakref
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Final, TypedDict
 
 import anthropic
 import httpx2
+from anthropic.types import (
+    ImageBlockParam,
+    MessageParam,
+    TextBlockParam,
+    ToolParam,
+    ToolResultBlockParam,
+)
 from mcp import Client
 from mcp.client.auth import OAuthFlowError, OAuthTokenError
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
-from mcp.types import (CallToolRequestParams, CallToolResult, ElicitRequest,
-                       ElicitRequestFormParams, ElicitResult, ImageContent, InputRequiredResult,
-                       TextContent)
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ElicitRequest,
+    ElicitRequestFormParams,
+    ElicitResult,
+    ImageContent,
+    InputRequiredResult,
+    InputResponses,
+    TextContent,
+)
 
 from .login import LoginFailed
 
-MODELS = {   # shown in the window: model ID, price in dollars per million tokens
-    "Claude Opus 5.5": {"id": "claude-opus-5-5", "input": 4.00, "output": 20.00, "cache_read": 0.20},
-    "Claude Sonnet 5.5": {"id": "claude-sonnet-5-5", "input": 2.00, "output": 10.00, "cache_read": 0.20},
+
+class Model(TypedDict):   # a model's ID and its prices in dollars per million tokens
+    id: str
+    input: float
+    output: float
+    cache_read: float
+
+
+MODELS: dict[str, Model] = {   # shown in the window: model ID, price in dollars per million tokens
+    "Claude Opus 5.5": {"id": "claude-opus-5-5", "input": 4.00, "output": 20.00,
+                        "cache_read": 0.20},
+    "Claude Sonnet 5.5": {"id": "claude-sonnet-5-5", "input": 2.00, "output": 10.00,
+                          "cache_read": 0.20},
 }
 CACHE_WRITE = 1.25   # writing to the prompt cache costs 1.25 times the input price
-EFFORT = "high"      # how hard Claude thinks: low, medium, high, xhigh or max
+EFFORT: Final = "high"   # how hard Claude thinks: low, medium, high, xhigh or max
 MAX_TOKENS = 16000   # longest answer per step
 LIVE_GAP = 0.15      # pause between two live frames, in seconds
 CONFIRM_FIELD = "mark_failed"   # the one yes-or-no field of the server's fail question
@@ -66,7 +92,8 @@ def read_key(variable: str, path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8").strip()
     except OSError as err:
-        raise SystemExit(f"No key: set {variable} or put the key in {path} ({err.strerror}).")
+        raise SystemExit(
+            f"No key: set {variable} or put the key in {path} ({err.strerror}).") from None
 
 
 class KeyAuth(httpx2.Auth):
@@ -93,7 +120,7 @@ def server_http(auth: httpx2.Auth, verify=True) -> httpx2.AsyncClient:
     verify: True, or an SSL context that trusts the certificate authority of a private
     certificate (HTTPS).
     """
-    refused_once = weakref.WeakSet()
+    refused_once: weakref.WeakSet[httpx2.Request] = weakref.WeakSet()
 
     async def check_answer(response):
         # The connection library reports these only as "an error response"; say which.
@@ -120,10 +147,10 @@ def server_http(auth: httpx2.Auth, verify=True) -> httpx2.AsyncClient:
 @asynccontextmanager
 async def server_client(url: str, auth: httpx2.Auth, confirm, verify=True):
     """A connection to the inspection server at url, as an MCP client."""
-    async with server_http(auth, verify) as http:
-        async with Client(streamable_http_client(url, http_client=http),
-                          elicitation_callback=confirm) as client:
-            yield client
+    async with (server_http(auth, verify) as http,
+                Client(streamable_http_client(url, http_client=http),
+                       elicitation_callback=confirm) as client):
+        yield client
 
 
 async def live_view(url: str, auth: httpx2.Auth, show, tell, verify=True,
@@ -214,9 +241,9 @@ class Station:
         # connect(confirm) opens a new connection to the inspection server (async with)
         self.claude = claude
         self.connect = connect
-        self.messages = []
-        self.photos = {}   # image ID: JPEG bytes, to show in the confirmation dialog
-        self.running = {}  # the arguments of the tool call running now, for that dialog
+        self.messages: list[MessageParam] = []
+        self.photos: dict[str, bytes] = {}     # image ID: JPEG bytes, for the confirmation dialog
+        self.running: dict[str, object] = {}   # the running tool call's arguments, for that dialog
 
     def new_conversation(self) -> None:
         self.messages = []
@@ -247,8 +274,8 @@ class Station:
         try:
             async with self.connect(confirm) as server:
                 listed = await server.list_tools()
-                tools = [{"name": t.name, "description": t.description or "",
-                          "input_schema": t.input_schema} for t in listed.tools]
+                tools: list[ToolParam] = [{"name": t.name, "description": t.description or "",
+                                           "input_schema": t.input_schema} for t in listed.tools]
                 system = f"{server.instructions or ''}\n\n{OPERATOR}".strip()
                 while True:
                     response = await self.claude.messages.create(
@@ -279,8 +306,9 @@ class Station:
         if (list(properties) != [CONFIRM_FIELD]
                 or properties[CONFIRM_FIELD].get("type") != "boolean"):
             return ElicitResult(action="decline")
-        said = await ask_person(Question(params.message,
-                                         self.photos.get(self.running.get("image_id"))))
+        image_id = self.running.get("image_id")
+        said = await ask_person(Question(
+            params.message, self.photos.get(image_id) if isinstance(image_id, str) else None))
         if said is None:
             return ElicitResult(action="cancel")
         return ElicitResult(action="accept", content={CONFIRM_FIELD: said})
@@ -317,7 +345,8 @@ class Station:
         self.drop_unfinished_turn()
         return f"{why} {DROPPED}"
 
-    async def run_tool(self, server: Client, call, report: Report, answer) -> dict:
+    async def run_tool(self, server: Client, call, report: Report,
+                       answer) -> ToolResultBlockParam:
         """One tool call Claude asked for; returns the result as Claude reads it."""
         report(ToolCall(call.name, call.input))
         self.running = call.input
@@ -325,16 +354,20 @@ class Station:
         self.running = {}
         return self.tool_result(call, result, report)
 
-    def tool_result(self, call, result: CallToolResult, report: Report) -> dict:
+    def tool_result(self, call, result: CallToolResult, report: Report) -> ToolResultBlockParam:
         """The server's result, as Claude reads it; also reported to the window."""
-        content, texts, pictures = [], [], []
+        content: list[TextBlockParam | ImageBlockParam] = []
+        texts, pictures = [], []
         for item in result.content:
             if isinstance(item, TextContent):
                 content.append({"type": "text", "text": item.text})
                 texts.append(item.text)
             elif isinstance(item, ImageContent):
+                # The picture's type, as the server names it (JPEG), goes on unchanged: the
+                # SDK's types allow only the four Claude reads, and Claude's API checks it.
                 content.append({"type": "image", "source": {
-                    "type": "base64", "media_type": item.mime_type, "data": item.data}})
+                    "type": "base64", "media_type": item.mime_type,  # type: ignore[typeddict-item]
+                    "data": item.data}})
                 pictures.append(base64.b64decode(item.data))
         if not content and result.structured_content is not None:
             text = json.dumps(result.structured_content)
@@ -364,7 +397,8 @@ async def call_tool(server: Client, call, report: Report, answer) -> CallToolRes
     person's answer, and the call is sent again with it and the state. (Over the older
     protocol, the server asks during the call instead: the client's elicitation callback.)
     """
-    responses, state = None, None
+    responses: InputResponses | None = None
+    state: str | None = None
     for _ in range(INPUT_ROUNDS):
         sent = CallToolRequestParams(name=call.name, arguments=call.input,
                                      input_responses=responses, request_state=state)
@@ -374,13 +408,13 @@ async def call_tool(server: Client, call, report: Report, answer) -> CallToolRes
         report(McpMessage(False, "result", as_json(result)))
         if not isinstance(result, InputRequiredResult):
             return result
-        responses = {}
+        answers: InputResponses = {}
         for key, request in (result.input_requests or {}).items():
             if not isinstance(request, ElicitRequest):
                 raise RuntimeError(f"The server asked for {request.method}, which this app "
                                    "does not offer.")
-            responses[key] = await answer(request.params)
-        responses, state = responses or None, result.request_state
+            answers[key] = await answer(request.params)
+        responses, state = answers or None, result.request_state
     raise RuntimeError(f"The server asked more than {INPUT_ROUNDS} times in one tool call.")
 
 
@@ -396,7 +430,7 @@ def as_json(message) -> dict:
     return body
 
 
-def price(usage, prices: dict) -> float:
+def price(usage, prices: Model) -> float:
     """What one request cost, in dollars."""
     million = 1_000_000
     return (usage.input_tokens * prices["input"]

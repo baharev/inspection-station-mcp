@@ -30,8 +30,15 @@ from mcp.client.streamable_http import streamable_http_client
 from PIL import Image
 
 from inspection_server.camera import FakeCamera
-from inspection_server.server import (CLOCK_LEEWAY, create_server, http_app, key_auth, main,
-                                      oauth_auth, secret_key)
+from inspection_server.server import (
+    CLOCK_LEEWAY,
+    create_server,
+    http_app,
+    key_auth,
+    main,
+    oauth_auth,
+    secret_key,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -52,7 +59,8 @@ def make_app(tmp_path, auth):
     samples = tmp_path / "samples"
     samples.mkdir()
     Image.new("RGB", (640, 480), (220, 30, 30)).save(samples / "a.jpg")
-    return http_app(create_server(FakeCamera(samples), tmp_path / "data", **auth), tmp_path / "data")
+    data = tmp_path / "data"
+    return http_app(create_server(FakeCamera(samples), data, **auth), data)
 
 
 @pytest.fixture
@@ -83,10 +91,10 @@ def audit_lines(tmp_path):
 @asynccontextmanager
 async def http(app, headers=None, client=THIS_COMPUTER):
     """An HTTP client talking to the app in-process, with the app's startup and shutdown."""
-    async with app.router.lifespan_context(app):
-        async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app, client=client),
-                                      headers=headers) as http_client:
-            yield http_client
+    async with (app.router.lifespan_context(app),
+                httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app, client=client),
+                                   headers=headers) as http_client):
+        yield http_client
 
 
 @pytest.mark.parametrize("headers", [None, {"Authorization": "Bearer wrong"},
@@ -107,9 +115,9 @@ async def test_requests_without_the_key_are_refused(app, headers, tmp_path):
 
 
 async def test_with_the_key_the_tools_work(app):
-    async with http(app, {"Authorization": f"Bearer {KEY}"}) as client:
-        async with Client(streamable_http_client(URL, http_client=client)) as mcp:
-            result = await mcp.call_tool("capture_image", {})
+    async with (http(app, {"Authorization": f"Bearer {KEY}"}) as client,
+                Client(streamable_http_client(URL, http_client=client)) as mcp):
+        result = await mcp.call_tool("capture_image", {})
     assert not result.is_error
     assert result.content[0].text.startswith("Photo ")
 
@@ -146,13 +154,13 @@ async def test_tokens_that_do_not_fit_are_refused(login_app, bad):
 
 
 async def test_an_inspector_records_under_their_name(login_app, tmp_path):
-    async with http(login_app, token("inspector")) as client:
-        async with Client(streamable_http_client(URL, http_client=client)) as mcp:
-            photo = await mcp.call_tool("capture_image", {})
-            image_id = photo.structured_content["image_id"]
-            result = await mcp.call_tool("record_inspection", {
-                "image_id": image_id, "part_id": "tray-07", "verdict": "pass",
-                "findings": "All tools present."})
+    async with (http(login_app, token("inspector")) as client,
+                Client(streamable_http_client(URL, http_client=client)) as mcp):
+        photo = await mcp.call_tool("capture_image", {})
+        image_id = photo.structured_content["image_id"]
+        result = await mcp.call_tool("record_inspection", {
+            "image_id": image_id, "part_id": "tray-07", "verdict": "pass",
+            "findings": "All tools present."})
     assert not result.is_error
     assert result.structured_content["user"] == "inspector"
     assert all(line.split()[1] == "inspector" for line in audit_lines(tmp_path))
@@ -162,17 +170,17 @@ async def test_a_viewer_may_look_but_not_record(login_app, tmp_path):
     async def nobody(context, params):
         pytest.fail("The viewer was asked to confirm a fail they may not record.")
 
-    async with http(login_app, token("viewer", roles=["viewer"])) as client:
-        async with Client(streamable_http_client(URL, http_client=client),
-                          elicitation_callback=nobody) as mcp:
-            photo = await mcp.call_tool("capture_image", {})
-            image_id = photo.structured_content["image_id"]
-            for verdict in ("pass", "fail"):
-                result = await mcp.call_tool("record_inspection", {
-                    "image_id": image_id, "part_id": "tray-07", "verdict": verdict,
-                    "findings": "Hammer missing."})
-                assert result.is_error
-                assert "needs the role 'inspector'" in result.content[0].text
+    async with (http(login_app, token("viewer", roles=["viewer"])) as client,
+                Client(streamable_http_client(URL, http_client=client),
+                       elicitation_callback=nobody) as mcp):
+        photo = await mcp.call_tool("capture_image", {})
+        image_id = photo.structured_content["image_id"]
+        for verdict in ("pass", "fail"):
+            result = await mcp.call_tool("record_inspection", {
+                "image_id": image_id, "part_id": "tray-07", "verdict": verdict,
+                "findings": "Hammer missing."})
+            assert result.is_error
+            assert "needs the role 'inspector'" in result.content[0].text
     assert not photo.is_error
     assert "viewer REFUSED record_inspection: needs the role inspector" in audit_lines(tmp_path)[-1]
 
@@ -189,9 +197,9 @@ async def test_roles_sent_as_text_count_for_nothing(login_app):
 
 
 async def test_a_login_without_roles_may_do_nothing(login_app):
-    async with http(login_app, token("guest", roles=[])) as client:
-        async with Client(streamable_http_client(URL, http_client=client)) as mcp:
-            result = await mcp.call_tool("capture_image", {})
+    async with (http(login_app, token("guest", roles=[])) as client,
+                Client(streamable_http_client(URL, http_client=client)) as mcp):
+        result = await mcp.call_tool("capture_image", {})
     assert "needs the role 'viewer'" in result.content[0].text   # not a photo
     assert result.is_error
 

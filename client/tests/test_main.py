@@ -13,8 +13,13 @@ import pytest
 from PySide6.QtCore import QSize
 
 from inspection_client import app
-from inspection_client.station import (SERVER_KEY_FILE, CLAUDE_KEY_FILE, KeyAuth, server_client,
-                                        live_view)
+from inspection_client.station import (
+    CLAUDE_KEY_FILE,
+    SERVER_KEY_FILE,
+    KeyAuth,
+    live_view,
+    server_client,
+)
 
 KEYS = {"API_KEY": "camera key", "ANTHROPIC_API_KEY": "Claude key"}
 

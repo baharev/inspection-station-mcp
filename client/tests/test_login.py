@@ -14,7 +14,7 @@ import pytest
 
 from inspection_client import login as login_module
 from inspection_client.login import RENEW_EARLY, BrowserLogin, LoginFailed
-from inspection_client.station import ServerRefused, server_http, describe
+from inspection_client.station import ServerRefused, describe, server_http
 
 pytestmark = pytest.mark.anyio
 

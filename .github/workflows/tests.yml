@@ -1,0 +1,114 @@
+# The tests of both programs on Linux, Windows and macOS with Python 3.13 and 3.14, the
+# linter and type checker, and the client's contract test against the real server.
+# On a push or a start by hand, installs take the tested versions (constraints.txt);
+# the weekly run takes the newest versions instead, to show when a new release breaks
+# something.
+name: Tests
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      newest:
+        description: "Install the newest versions instead of the tested ones"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "17 5 * * 1"   # Mondays, 05:17 UTC
+
+permissions:
+  contents: read
+
+concurrency:   # a newer push stops the run still going for the same branch
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The tested versions, or nothing for the newest ones.
+  CONSTRAINTS: ${{ (github.event_name != 'schedule' && !inputs.newest) && '-c constraints.txt' || '' }}
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  tests:
+    name: ${{ matrix.program }}, ${{ matrix.os }}, Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.13", "3.14"]
+        program: [server, client]
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.program }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: ${{ matrix.program }}/pyproject.toml
+      # Qt's libraries were found with ldd in a bare Debian; most are on the runner already.
+      - name: Install the virtual screen and the libraries Qt needs (Linux)
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install -y xvfb libegl1 libgl1 libxkbcommon0
+          libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 libx11-6
+      - name: Install
+        run: python -m pip install -e ".[test]" $CONSTRAINTS
+      - name: Run the tests on a virtual screen (Linux), for the server window's tests
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m pytest -q -ra
+      - name: Run the tests
+        if: runner.os != 'Linux'
+        run: python -m pytest -q -ra
+
+  lint:
+    name: ruff and mypy, ${{ matrix.program }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        program: [server, client]
+    defaults:
+      run:
+        working-directory: ${{ matrix.program }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: ${{ matrix.program }}/pyproject.toml
+      - name: Install
+        run: python -m pip install -e ".[dev]" $CONSTRAINTS
+      - name: ruff
+        run: python -m ruff check .
+      - name: mypy
+        run: python -m mypy
+
+  contract:
+    name: client against the real server
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: "*/pyproject.toml"
+      - name: Install the server
+        working-directory: server
+        run: python -m pip install -e . $CONSTRAINTS
+      - name: Install the client, in the same environment
+        working-directory: client
+        run: python -m pip install -e ".[test]" $CONSTRAINTS
+      - name: Run the contract test (the import first, so that it cannot be skipped)
+        working-directory: client
+        run: |
+          python -c "import inspection_server.server"
+          python -m pytest -q -ra tests/test_contract.py

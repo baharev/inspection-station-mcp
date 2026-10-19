@@ -22,7 +22,7 @@ This README is the reference for installing and running the server. What it is f
 
 ## Installing
 
-Python 3.13+. It has never been tested on macOS; it should work there too, since the camera code for it follows the documentation of the libraries it uses. The commands in this README are for Linux, and should work the same in the macOS Terminal; for PowerShell, see [On Windows](#on-windows).
+Python 3.13+. Its automatic tests pass on macOS, but nobody has run it on a Mac with a real camera; it should work there too, since the camera code for it follows the documentation of the libraries it uses. The commands in this README are for Linux, and should work the same in the macOS Terminal; for PowerShell, see [On Windows](#on-windows).
 
 In a terminal, in the `server` folder:
 
@@ -39,7 +39,13 @@ pytest -q
 source .venv/bin/activate
 ```
 
-Keep the `-e` in the install command: with it, the server finds its sample photos in `samples/`, and keeps the photos it takes in `captures/` and its logs in `logs/`, all in this folder (`captures/` and `logs/` are kept out of git). What the logs hold, and how to check them: [The audit trail](../README.md#the-audit-trail) in the main README.
+If the install or the tests fail with the newest versions of the packages the server uses, install the exact versions the tests passed with, listed in `constraints.txt`, instead:
+
+```bash
+pip install -e ".[test]" -c constraints.txt
+```
+
+Keep the `-e` in the install command: with it, the server finds its sample photos in `samples/`, and keeps the photos it takes in `captures/` and its logs in `logs/`, all in this folder (`captures/` and `logs/` are kept out of git). Installed without `-e`, the server has no folder of its own: it stops at its start and says how to remove that copy and install it again. What the logs hold, and how to check them: [The audit trail](../README.md#the-audit-trail) in the main README.
 
 ## How to start it
 
@@ -231,7 +237,7 @@ In the window:
 - **Copy the secret key**: puts the key on the clipboard, for making the key file on another computer. On Linux, the clipboard keeps it only while the window is open.
 - **Put a shortcut on the desktop** (Windows and Linux): from then on, start the window with a double click. The shortcut starts the window from this environment; if you delete or move the environment, make the shortcut again.
 
-The window uses Tkinter, the window toolkit that comes with Python from python.org on Windows and macOS, and with Miniconda. Some Linux distributions ship it separately: if the window says that Tkinter is missing, install it for your Python version (on Ubuntu and Debian, such as `sudo apt install python3.13-tk`; the message names the package). The window has never been tested on macOS.
+The window uses Tkinter, the window toolkit that comes with Python from python.org on Windows and macOS, and with Miniconda. Some Linux distributions ship it separately: if the window says that Tkinter is missing, install it for your Python version (on Ubuntu and Debian, such as `sudo apt install python3.13-tk`; the message names the package). The window's automatic tests pass on macOS, but nobody has opened it on a Mac.
 
 On Linux with Miniconda or Anaconda, the window's letters look rough, without smoothing: the Tkinter in Anaconda's own package channel is built that way. The one from the conda-forge channel draws them smoothly. Make the environment from there, then install the server into it, in the `server` folder:
 
@@ -414,5 +420,6 @@ The tests were tested too: 28 bugs were planted in the code by hand, one at a ti
 - `scripts/keycloak.sh` and `keycloak/inspection-realm.json`: the demo login server, its users and roles
 - `scripts/make_certs.sh`: certificates for HTTPS between two computers
 - `docs/test-quality.md`: how the tests were checked, with bugs planted on purpose
+- `constraints.txt`: the exact versions of the packages the tests passed with
 
 Built with the official [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk), version 2.3.0.
