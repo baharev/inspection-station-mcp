@@ -1,42 +1,29 @@
 # Inspection Station MCP
 
-An AI inspects parts with a camera: it takes photos, looks closer where it needs to, and
-decides pass, fail or unsure. The camera sits behind an MCP server, which enforces the
-rules and keeps the inspection log: whatever the AI is told, no part is marked as failed
-without a person's yes.
+An AI inspects parts using a camera: it takes photos, zooms in where needed, and decides whether each part passes, fails, or needs further review. The camera is accessed through an MCP server that enforces the inspection rules and maintains an audit trail. Crucially, **no part is marked as failed without human approval**, regardless of what the AI is instructed to do.
 
-![The setup. Left: the inspection station, where no AI runs: a camera above a conveyor belt, and the station computer with the MCP server, which keeps the inspection log. Right: the operator's computer with the desktop app, which talks to the MCP server over the network and to Claude, the AI, on the internet.](docs/setup.svg)
+![The setup. Left: the inspection station, with a camera above a conveyor belt and a station computer running the MCP server and maintaining the inspection log. No AI runs at the station. Right: the operator's computer running the desktop app, which communicates with the MCP server over the network and with Claude, the AI, in the cloud.](docs/setup.svg)
 
-The station computer is the one the camera is plugged into; the MCP server runs there and
-keeps the log. The operator's computer runs the desktop app, which talks to the server and
-to Claude; Claude Code can take the app's place. The two computers can also be one and the
-same, and the camera a USB webcam, or the fake camera, which serves stored photos instead.
+The camera is connected to the station computer, where the MCP server runs. The station computer also maintains the inspection log. The operator's computer runs the desktop app, which communicates with both the server and Claude in the cloud. Claude Code can replace the desktop app, and both applications can also run on the same computer. The camera can be a USB webcam or a simulated camera that serves stored photos.
 
-MCP, the [Model Context Protocol](https://modelcontextprotocol.io), is the standard way to
-plug tools, data and devices into AI applications such as Claude Code. This repository is a
-self-built demonstration of connecting a device to an AI that way: the server, a desktop app
-that uses it, photos of five test scenes, and the AI's real answers about them. It shows:
+MCP, the [Model Context Protocol](https://modelcontextprotocol.io), is a standard way to connect AI applications, such as Claude Code, to external tools, data, and devices.
 
-- **The rules in the server, not in the prompt**: inputs checked, limits in code, and a
-  person's yes before any fail, asked through the part of MCP that lets a server ask the
-  user a question ([the rules](#the-tools-the-server-provides-and-the-rules-it-enforces)).
-- **An audit trail** of every photo, closer look, record and fail question, with each
-  photo's fingerprint ([the audit trail](#the-audit-trail)).
-- **Logins with roles** over OAuth, with a demo login server, or one shared secret key;
-  over the network or started by Claude Code itself ([ways to run it](#other-ways-to-run-it)).
-- **A desktop app with its own Claude loop**, through the Anthropic API, which can show
-  every MCP message ([the app](client/README.md)).
-- **The AI's real answers**, its mistakes included ([what the AI answered](#what-the-ai-answered)),
-  and how the pattern grows into a plant ([from this demo to a plant](#from-this-demo-to-a-plant)).
-- **Tests that were tested**, by planting bugs on purpose ([reading the code](#reading-the-code));
-  checked on Linux and Windows, with a real webcam.
+This repository is a self-built demonstration of connecting a physical device to an AI through a web API. It includes the server, a desktop app that uses it, photos of five test scenes, and the AI's actual responses to those scenes.
 
-Author: [Ali Baharev](https://baharev.info/). I built it with Claude Code, Anthropic's AI
-coding assistant, which wrote much of the code under my direction; the `CLAUDE.md` files are
-the instructions I keep for it. The design, the rules and what to check were my decisions.
-This is a finished demonstration, now in maintenance mode: I keep it working and up to date,
-but issues and pull requests are turned off. You are welcome to fork it under the
-[MIT license](LICENSE).
+The demo illustrates:
+
+- **Rules enforced by the server, not the prompt.** Inputs are validated, limits are enforced in code, and every failure decision requires human approval through MCP's mechanism for requesting user input ([the tools, the server provides, and the rules it enforces](#the-tools-the-server-provides-and-the-rules-it-enforces)).
+- **An audit trail.** Every photo, closer inspection, record, and request for failure approval is logged, along with a fingerprint of each photo ([the audit trail](#the-audit-trail)).
+- **Authentication and access control.** OAuth with a demo authorization server, or a shared secret key, supports different ways of running the system: over the network or launched directly by Claude Code ([ways to run it](#other-ways-to-run-it)).
+- **A desktop app with its own Claude agent loop.** The app uses the Anthropic API and can display every MCP message exchanged during an inspection ([the app](client/README.md)).
+- **The AI's actual responses, mistakes included.** See what the AI got right and wrong, and how the demo's architecture can be extended to a production plant ([what the AI answered](#what-the-ai-answered), [from this demo to a plant](#from-this-demo-to-a-plant)).
+- **Tests designed to catch real defects.** The test suite deliberately introduces bugs to verify that the checks detect them ([reading the code](#reading-the-code)). The system has been tested on Linux and Windows, including with a real webcam.
+
+**Author:** [Ali Baharev](https://baharev.info/).
+
+I built this project with Claude Code, which wrote much of the code under my direction. My instructions are documented in `CLAUDE.md`. The architecture, rules, and verification strategy were my decisions.
+
+This is a completed demonstration in maintenance mode: I keep it working and up to date, but issues and pull requests are disabled. You are welcome to fork it under the [MIT license](LICENSE).
 
 ## Contents
 
@@ -55,29 +42,32 @@ but issues and pull requests are turned off. You are welcome to fork it under th
 
 ## Quick start
 
-You need Python 3.13+, and access to Claude: either
-[Claude Code](https://www.anthropic.com/claude-code), which needs a paid Claude plan or a
-Claude API account, or a Claude API key for the desktop app. No camera is needed: the
-server can serve stored sample photos instead.
+You need Python 3.13 or later and access to Claude, either through [Claude Code](https://www.anthropic.com/claude-code) (with a paid Claude plan or a Claude API account) or through a Claude API key for the desktop app. No physical camera is required: the server can serve stored sample photos instead.
 
-Check the Python version first, with `python3 --version` (in PowerShell,
-`python --version`). The Python that comes with the system is often too old: Ubuntu 24.04,
-for example, comes with Python 3.12, which will not work. Install a newer Python next to
-it, and write `python3.14` or `python3.13` instead of `python3` below.
+First, check your Python version:
 
-Would you rather click than type? `inspection-server-window` opens a small window that
-starts and stops the server ([the server window](server/README.md#the-server-window)).
-Other setups, such as the server on one computer and the app on another, Claude Code
-starting the server by itself, or a login for each person, are in
-[Other ways to run it](#other-ways-to-run-it).
+- Linux/macOS: `python3 --version`
+- Windows (PowerShell): `python --version`
+
+The Python version bundled with your operating system may be too old. Ubuntu 24.04, for example, comes with Python 3.12, which is not supported by this project. Install Python 3.13 or later alongside the system version, and use the corresponding command, such as `python3.13` or `python3.14`, instead of `python3` in the commands below.
+
+The quickest way to explore the demo is to start the server with the sample photos and then connect either the desktop app or Claude Code. If you prefer clicking to typing, `inspection-server-window` opens a small window for starting and stopping the server ([the server window](server/README.md#the-server-window)).
+
+Other configurations, including running the server and client on separate computers, letting Claude Code start the server itself, and providing individual logins are described in [Other ways to run it](#other-ways-to-run-it).
 
 ### On Linux or macOS
 
-It has never been tested on macOS; it should work there too, since the code follows the
-documentation of the libraries it uses. In a terminal (on Ubuntu and Debian,
-`sudo apt install python3-venv` first, once):
+macOS has not been tested, but the code follows the documented interfaces of its dependencies and should work there too.
 
+On Ubuntu or Debian, install the virtual-environment support first, if needed:
+
+```bash
+sudo apt install python3-venv
 ```
+
+Then clone the repository, create a virtual environment, install the server, and start it:
+
+```bash
 git clone https://github.com/baharev/inspection-station-mcp.git
 cd inspection-station-mcp/server
 python3 -m venv .venv
@@ -86,26 +76,29 @@ pip install -e .
 inspection-server --http
 ```
 
-The server lists the cameras it finds and asks for a number: type the number of the last
-entry, "Sample photos, no camera", and press Enter. It remembers the choice. Leave it
-running; it is ready when it shows "Uvicorn running on http://127.0.0.1:8000". At its first
-start it also made a secret key, in the file `~/.config/inspection-server/api-key`; the
-commands below read it from there, so you never type it.
+The server lists the cameras it finds and prompts you to select one. Enter the number corresponding to the last entry, **Sample photos, no camera**, and press Enter. The server remembers your choice for subsequent starts.
 
-The sample photos come one per photo taken, in a fixed order: the complete tool tray first,
-then the tray with its hammer missing, then the other scenes. Each start of the server
-begins again with the first. While the server runs, `http://localhost:8000/live` in a
-browser shows what the camera sees; with the sample photos, the one the next photo will
-return.
+Leave this terminal running. The server is ready when it reports:
+
+```text
+Uvicorn running on http://127.0.0.1:8000
+```
+
+On its first start, the server also generates an API key and saves it to `~/.config/inspection-server/api-key`. The commands below read this key automatically; you do not need to copy or type it.
+
+**How the sample photos work**
+
+Each photo request returns the next image in a fixed sequence. The first is the complete tool tray, the second shows the tray with its hammer missing, and the remaining photos show the other test scenes. Each server restart resets the sequence to the first image.
+
+While the server is running, open [http://localhost:8000/live](http://localhost:8000/live) in a browser to see the camera view. When using the sample photos, this displays the image that the next photo request will return.
 
 #### Without any Claude access
 
-A script plays the AI's part with fixed calls: a photo, a closer look and a proposed fail,
-which you confirm or not in the terminal. It needs no running server and no key: the
-server runs inside the script. In a second terminal, in the `inspection-station-mcp`
-folder:
+You can explore the server's tools without Claude or an API key. A test script plays the AI's part using a fixed sequence of calls: taking a photo, inspecting it more closely, and proposing a failure. You then confirm or reject the proposed failure in the terminal.
 
-```
+The script starts its own server, so you do not need the server from the previous section running. In a second terminal, from the repository root, run:
+
+```bash
 cd server
 source .venv/bin/activate
 python scripts/try_tools.py
@@ -113,11 +106,13 @@ python scripts/try_tools.py
 
 #### With the desktop app
 
-Put your Claude API key into the file `~/.config/anthropic/api-key` (see
-[the app's README](client/README.md#your-claude-api-key)), then, in a second terminal, in
-the `inspection-station-mcp` folder:
+The desktop app runs its own Claude interaction loop and communicates with the MCP server. It requires a Claude API key, which is billed separately from a Claude subscription.
 
-```
+Save your API key in `~/.config/anthropic/api-key` (see [the app's README](client/README.md#your-claude-api-key)).
+
+With the server still running, open a second terminal at the repository root and start the app:
+
+```bash
 cd client
 python3 -m venv .venv
 source .venv/bin/activate
@@ -125,52 +120,55 @@ pip install -e .
 inspection-client
 ```
 
-Ask in the window: "Take a photo of the inspection station. Is the tool tray complete?"
-Then: "Take another photo. Check that every tool is in the tray; it is part tray-02.
-Record the result." The fail question comes up as a dialog with the photo. After the second
-question, the window looks like this: the camera's live view on the left; on the right the
-conversation, with Claude's closer look at the tray, the fail it recorded and your yes:
+In the app, ask:
 
-![The desktop app. Left: the live view of the tool tray with its hammer missing. Right: Claude's closer look at the tray, the fail recorded after the person's yes, and Claude's answer that the hammer is missing.](client/docs/app-main.png)
+> Take a photo of the inspection station. Is the tool tray complete?
 
-The screenshot was taken with only the tray's photo in the sample folder, so the live view
-shows the tray; with all the sample photos it shows the next one. Two of Claude's words in
-it are wrong: it counts the serrated table knife as one of the tray's tools, and nothing was
-"taken off the line": the demo only writes the record. The person's yes confirms the fail,
-not every word of the AI's findings, which stay in the log as the AI's own text.
+Then ask:
+
+> Take another photo. Check that every tool is in the tray; it is part tray-02. Record the result.
+
+Because the second photo shows the missing hammer, Claude should investigate the tray more closely and propose a failure. The app presents the server's approval request as a dialog containing the photo. Review it and approve the failure to complete the recording.
+
+After the second question, the window looks like this: the live camera view is on the left; on the right is the conversation, including Claude's closer inspection of the tray, the recorded failure, and your approval.
+
+![The desktop app. Left: the live view of the tool tray with its hammer missing. Right: Claude's closer look at the tray, the failure recorded after human approval, and Claude's answer that the hammer is missing.](client/docs/app-main.png)
+
+The screenshot was taken with only the tool-tray photo in the sample folder, so the live view displays that image. With all the sample photos present, it displays the next image in the sequence.
+
+The screenshot also illustrates why the audit trail matters. Claude makes two mistakes: it counts the serrated table knife as one of the tray's tools, and it says that the part was "taken off the line", although the demo only records the result. Your approval confirms the failure decision, not every statement in Claude's description. The AI's original text remains in the log.
 
 #### With Claude Code
 
-Why Claude Code at all, next to the desktop app: it is an AI application this project did
-not write, so it shows two things the app alone cannot. First, that the server is a plain
-MCP server: any application that speaks MCP connects to it without a change, which is the
-reason to use MCP rather than a private link between the server and its own app. Second,
-that the rules hold whoever connects: Claude Code too must bring a person's yes before a
-part is marked as failed, and with logins, a viewer is refused recording there too. It is
-also the cheaper way in if you have a Claude subscription but no API account: Claude Code
-runs on a paid Claude plan, while the app needs an API key, which is billed separately.
+Claude Code provides a second way to interact with the server, without using the desktop app. This demonstrates two important properties of the design:
 
-In a second terminal, in the folder where you will use Claude Code (the server is
-registered for that folder only):
+1. **The server is a standalone MCP server.** Any compatible MCP client can connect to it without changes to the server. This is the point of using MCP rather than a private interface between the server and its own application.
+2. **The rules are enforced independently of the client.** Claude Code must also obtain human approval before a part can be marked as failed. When role-based access control is enabled, a viewer is also prevented from recording results.
 
-```
+Claude Code is also an alternative if you have a paid Claude subscription but do not want to use the API directly. The desktop app requires an API key, billed separately from your Claude subscription.
+
+In a second terminal, navigate to the folder in which you intend to use Claude Code. The MCP server registration below is scoped to that folder:
+
+```bash
 claude mcp add -s local --transport http inspection-server http://localhost:8000/mcp --header "Authorization: Bearer $(cat ~/.config/inspection-server/api-key)"
 claude
 ```
 
-Ask the same questions (if you asked them in the app first, restart the server, so that the
-photos begin again with the complete tray). Claude Code first asks your permission to use
-each tool: that is Claude Code's own question. When Claude records a fail, Claude Code shows
-the server's question: tick the box "Mark this part as FAILED" and choose "Accept" to mark
-the part as failed; "Accept" without the tick, or "Decline", marks it as unsure. Claude Code
-shows the question as text, without the photo, so you are confirming the AI's description;
-the photo it judged is `captures/<photo ID>.jpg` in the `server` folder.
+Ask the same two questions as in the desktop-app section. If you have already run the inspection in the app, restart the server first so the sample-photo sequence starts again with the complete tool tray.
+
+Claude Code asks for permission to use each tool. These are Claude Code's own permission prompts, separate from the server's approval mechanism.
+
+When Claude proposes recording a failure, Claude Code displays the server's approval request as text rather than as a dialog with the photo. To mark the part as failed, tick **Mark this part as FAILED** and select **Accept**. Selecting **Accept** without ticking the box, or selecting **Decline**, leaves the result as unsure.
+
+Because the approval request contains no photo, you are confirming the AI's description rather than reviewing the image directly. To inspect the photo yourself, open `captures/<photo ID>.jpg` in the `server` directory.
 
 ### On Windows
 
-The same steps, in PowerShell; what to ask, and what you will see, are as above.
+The workflow is the same in PowerShell; the commands differ slightly. The instructions for choosing the sample photos, asking Claude to inspect the tray, and reviewing the result are the same as above.
 
-```
+Clone the repository, create a virtual environment, install the server, and start it:
+
+```powershell
 git clone https://github.com/baharev/inspection-station-mcp.git
 cd inspection-station-mcp\server
 python -m venv .venv
@@ -179,14 +177,19 @@ pip install -e .
 inspection-server --http
 ```
 
-If activating fails because running scripts is disabled, allow your own scripts once with
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+If activation fails because script execution is disabled, allow locally created scripts for your user account:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Then activate the environment and start the server as shown above.
 
 #### Without any Claude access on Windows
 
-In a second window, in the `inspection-station-mcp` folder:
+Open a second PowerShell window in the repository root and run the test script. As on Linux, it starts its own server, so the server started in the first window is not needed for this option.
 
-```
+```powershell
 cd server
 .venv\Scripts\Activate.ps1
 python scripts\try_tools.py
@@ -194,11 +197,11 @@ python scripts\try_tools.py
 
 #### With the desktop app on Windows
 
-The Claude API key goes into `$HOME\.config\anthropic\api-key` (see
-[the app's README](client/README.md#on-windows)). Then, in a second window, in the
-`inspection-station-mcp` folder:
+Save your Claude API key in `$HOME\.config\anthropic\api-key` (see [the app's README](client/README.md#on-windows)).
 
-```
+With the server running in the first PowerShell window, open a second window in the repository root and start the app:
+
+```powershell
 cd client
 python -m venv .venv
 .venv\Scripts\Activate.ps1
@@ -206,59 +209,44 @@ pip install -e .
 inspection-client
 ```
 
+Follow the same instructions as on Linux: ask Claude to inspect the tool tray, request a closer look, and record the result. Review the server's approval request before authorizing a failure.
+
 #### With Claude Code on Windows
 
-In a second window, in the folder where you will use Claude Code:
+In a second PowerShell window, navigate to the folder in which you intend to use Claude Code and register the server:
 
-```
+```powershell
 claude mcp add -s local --transport http inspection-server http://localhost:8000/mcp --header "Authorization: Bearer $(Get-Content $HOME\.config\inspection-server\api-key)"
 claude
 ```
 
+Ask the same questions as in the desktop-app section. The approval process works as described above: ticking **Mark this part as FAILED** and selecting **Accept** records a failure; accepting without the tick, or declining, leaves the result as unsure. The approval request is displayed as text, without the photo, so you can open `server\captures\<photo ID>.jpg` to review the image yourself.
+
 ## What an inspection station is
 
-A factory makes parts: a filled box, a tray of tools, a pack of food, a gauge. Before a
-part moves on to the next machine or to the customer, someone checks it. That check is
-the inspection, and the place where it happens is the inspection station: a table or a
-spot on the conveyor belt, with a camera and good lighting above it, and usually a screen
-for a worker, the operator.
+Factories make things: filled boxes, trays of tools, packs of food, gauges. Before a part moves to the next machine or reaches a customer, it must be checked. This check is called an *inspection*, and the place where it happens is the *inspection station*: typically a spot on a conveyor belt or a table, with a camera and good lighting above it and, often, a screen for the worker who oversees the process, the operator.
 
 Each part gets one of three outcomes:
 
-- **Pass**: the part is fine and moves on.
-- **Fail**: the part is bad (torn, a tool missing, a reading out of range). It is taken
-  off the line, to be scrapped or repaired. A fail costs money, because a part is thrown
-  away or reworked.
-- **Unsure**: the check cannot tell. The part is put aside for a person to look at.
+- **Pass**: the part meets the requirements and can move on.
+- **Fail**: the part is defective, for example, a pack is torn, a tool is missing, or a reading is out of range. It must be removed from the line for repair or disposal. A false failure costs money by sending a good part to rework or scrap.
+- **Unsure**: the inspection cannot reach a reliable conclusion. The part is set aside for a person to examine.
 
-Every outcome is also written down, with the part's label (such as `tray-07`), the time,
-the photo and what was seen. That list is the inspection log. Factories keep it because
-customers and quality rules demand proof that every part was checked, and so that bad
-parts can be traced back later.
+Every inspection is recorded in an *inspection log*, including the part's label (such as `tray-07`), the time, the photo, and the findings. Factories need this record to demonstrate that parts were checked, meet quality requirements, and can be traced when a defect is discovered later.
 
-Simple checks are usually done by fixed camera software ("is there a hole at this
-spot?"). This demo is about the checks such software cannot do, the open questions: "is
-anything missing from this tray?", "does any of these watches show a different time?"
+Many visual checks can be handled by conventional machine vision: for example, checking whether a hole is present at a known location. This demo focuses on less structured questions that are harder to capture in a fixed rule: Is anything missing from this tool tray? Do all the watches show the same time?
 
-In this demo, each photo stands for one part, and there is no production line: recording
-an outcome means writing one line to the inspection log, and nothing is moved or
-scrapped. The AI looks at the photo and decides pass, fail or unsure. A pass or an unsure
-is written down straight away. A fail is not: wrongly scrapping a good part costs money,
-so the server asks a person first.
+In this demo, each photo represents one part. There is no actual production line: recording an outcome adds an entry to the inspection log; nothing is physically moved, repaired, or scrapped.
+
+The AI examines the photo and proposes a pass, fail, or unsure outcome. The server records a pass or an unsure result directly. A proposed failure is different: **the server requires human approval before recording it as a fail**. This safeguard matters because a false failure can be costly, and an AI's confidence does not guarantee that its judgment is correct.
 
 ## Why an AI is needed here
 
-A device with a fixed task (set a temperature, read a sensor) is better driven by an
-ordinary script. A camera at an inspection station is different: the questions are open
-and change from part to part. A script needs to be written and tuned for every question;
-the AI answers a new question about the same photo right away. It reads an analog gauge
-like a person does, notices a torn pack, or sees that the hammer is missing from a tool
-tray. It can also check whether what it reads makes sense, which a script that only copies
-digits cannot do.
+For a device with a fixed task, setting a temperature or reading a sensor, an ordinary script is usually the better choice. Visual inspection is different when the questions are open-ended or vary from part to part. A conventional vision system often needs task-specific rules, image processing, or a trained model. An AI vision model can answer different questions about the same photo without requiring a separate inspection program for each one.
 
-It does not always: the AI can also be confidently wrong, as the scale below shows. That
-is why the server lets it look closer at any part of a photo, and why a person confirms
-every fail.
+For example, it can read an analog gauge, spot a torn package, or identify a missing hammer in a tool tray. It can also interpret what it sees in context: rather than merely copying digits from a display, it can check whether a reading appears plausible or whether two objects show different values.
+
+But the AI can also be confidently wrong, as the results below demonstrate. That is why the server lets it request a closer look at a photo and requires a person to approve every proposed failure. A closer look can provide more evidence, but it does not guarantee a correct judgment. The approval step addresses a different risk: even when the AI gets the inspection wrong, it cannot unilaterally record a failure.
 
 ## What the AI answered
 
@@ -497,36 +485,21 @@ application, not protection.
 
 ## What the server can and cannot guarantee
 
-The rules above hold whatever the AI does through the tools. A few things, though, are left
-to the programs around the server, or are left open on purpose:
+The rules described above hold regardless of what the AI tries to do through the server's three tools. But the server does not guarantee everything. Some protections depend on the client application, some depend on the deployment, and some checks are deliberately left out of this demo.
 
-- **Guaranteed: the AI cannot give the person's yes through the three tools.** The answer
-  to the fail question is not part of any tool's input: it comes back from the AI
-  application, sealed to that exact question, part and user.
-- **Not guaranteed: that a person, not a script, said yes.** The server relies on the AI
-  application (the desktop app, or Claude Code) to show its question to a person and pass
-  the answer on. Anyone with the secret key could write a program that says yes; logins
-  narrow that down to named people with the inspector role.
-- **Not guaranteed: that the AI has no other way in.** In the desktop app, Claude has only
-  the three tools. Claude Code can also run commands on its computer: with the key at
-  hand, it could call the server like any other program and answer the question itself.
-  What stops it then is Claude Code's own permission prompt for commands, not the server.
-  Where that matters, use the desktop app; a stronger design would have the server collect
-  the yes itself, for example on a page the logged-in inspector opens in the browser.
-- **Not checked: one verdict per part.** The part's label is whatever the AI types, and a
-  part can be photographed again: a confirmed fail for `tray-02` can be followed by a pass
-  for `tray-02` on another photo, recorded without asking anyone. In a plant the label
-  comes from the line, and a part that failed or is unsure waits for a person's decision.
-- **Trusted, not checked: what the server tells Claude.** The desktop app hands the server's
-  instructions and tool descriptions to Claude as they are, so the server itself must be
-  one you trust. The app answers only a question with the one yes-or-no field it expects,
-  and declines any other.
-- **Not filtered: what the camera sees.** It goes to the AI as it is: a note printed on a
-  part is read like any other text in the picture.
-- **Not confirmed by a person: a pass.** That is a choice: asking about every pass would
-  make the person do the inspection. Here the person guards the costly action, scrapping a
-  part. Where a bad part reaching the customer costs more, the passes need a check too, for
-  example a person looking at a sample of them.
+- **Guaranteed: the AI cannot supply its own approval through the three tools.** The answer to a failure-approval request is not an input to any of the tools. It comes back through the MCP client's response to that specific request, bound to the question, part, and user. The AI cannot simply add a field to a tool call to approve its own proposed failure.
+
+- **Not guaranteed: that a human actually approved the failure.** The server relies on the client application, either the desktop app or Claude Code, to present the approval request to a person and return the answer. A program with the shared secret key could call the server and submit an approval itself. Authentication with individual logins narrows this risk by restricting access according to identity and role, but it does not, by itself, prove that a human made a particular decision.
+
+- **Not guaranteed: that the AI has no alternative route to the server.** In the desktop app, Claude is given only the three MCP tools. Claude Code can also execute commands on its computer. With access to the server's key, it could use those commands to call the server directly and submit an approval like any other program. In that scenario, the server's approval mechanism alone does not stop it; protection depends on Claude Code's own command permissions. Where this distinction matters, use the desktop app. A stronger design would have the server collect approval through a separate interface, such as a page that an authenticated inspector opens in a browser.
+
+- **Not checked: that each part receives only one verdict.** The part label is supplied by the AI, and the same part can be photographed and recorded again. For example, a confirmed failure for `tray-02` can be followed by a pass for `tray-02` based on another photo, without further approval. In a real plant, the line should supply a reliable part identifier, and a part marked as failed or unsure should be held until the appropriate person decides what happens next.
+
+- **Trusted, not independently verified: the instructions the server gives Claude.** The desktop app passes the server's instructions and tool descriptions to Claude as received. The server must therefore be trusted to provide appropriate instructions and tool definitions. The app accepts only the expected yes-or-no response to an approval request and rejects other answers. This constrains the response format; it does not establish that the server's instructions are safe or correct.
+
+- **Not filtered: the contents of the camera image.** The image is sent to the AI as captured. Any text visible in it, including a note deliberately placed on a part, is interpreted along with the rest of the scene. The demo does not attempt to detect or neutralize instructions embedded in images.
+
+- **Not independently verified: a pass.** A pass is recorded without human approval by design. Requiring a person to approve every pass would make the person perform the inspection instead of the AI. This is a trade-off: the demo adds a human checkpoint to the potentially costly action of rejecting a part. In a plant where a defective part reaching the customer poses a greater risk than a false rejection, passes need safeguards too, for example, independent checks or human review of a sample of accepted parts.
 
 ## The audit trail
 
@@ -650,48 +623,27 @@ never tested on macOS, though it should work there too.
 
 ## From this demo to a plant
 
-The demo runs on one computer and talks to one device. A plant would build out the same
-pattern like this.
+This demo runs on one computer and connects to one device. A production deployment would extend the same pattern across the plant, while adding the controls, integration, and validation that a real production environment requires.
 
-Each existing system gets its own MCP server: a machine's OPC UA interface, a test bench, a
-manufacturing execution system (MES), an in-house REST API. Each server offers a few
-well-chosen tools built on the system's existing interface, not every endpoint it has. For
-this demo's job, an industrial camera or a vision system would replace the webcam: only the
-camera code changes, and the tools, the rules and the log stay as they are.
+**Connect existing systems through purpose-built MCP servers.** Each system gets a server that exposes a small set of well-defined tools built on its existing interface: an OPC UA interface on a machine, a test bench, a manufacturing execution system (MES), or an in-house REST API. The server exposes only the operations the AI needs, not every endpoint the underlying system provides. For this inspection task, an industrial camera or vision system would replace the webcam. Ideally, only the camera adapter would change; the inspection tools, rules, and logging would remain the same.
 
-The servers run on the plant network, over MCP's HTTP transport, with logins, so it is
-known which person and which application called what; starting a server on one computer is
-for development. A plant would use its existing login server (for example Microsoft Entra
-ID or Keycloak) and its own certificates instead of the demo's. The AI application runs in
-the office network: only the MCP servers reach into the production network, through its
-firewall, and no computer connects the machines straight to the internet (the figure above
-leaves this out). The photos go to the AI provider, which is a question for the plant's
-data protection officer and, where there is one, its works council, since a camera can
-catch people. When the internet or the AI service is down, people do the inspection.
+**Keep the production network under plant control.** MCP servers communicate over MCP's HTTP transport, with authentication and authorization appropriate to the deployment. Instead of the demo's shared key or development login server, a plant would use its existing identity provider, such as Microsoft Entra ID or Keycloak, together with properly managed certificates and credentials. The servers would run within the plant's controlled network environment; starting a server on a developer's computer is a development setup, not a production architecture.
 
-Tools that only read come first. Tools that change anything are added one at a time, each
-with its rules in the server, and a person's yes where a mistake costs money. A yes in a
-dialog is never a safety function: a machine's safety interlocks stay in its own
-controller.
+The AI application could run in the office network, with access to production systems restricted through explicitly configured network boundaries and firewall rules. Production machines should not need direct internet access just because an AI application uses them. The architecture must also account for what leaves the plant: inspection photos sent to an external AI provider raise data-protection and confidentiality questions. The plant's data protection officer and, where applicable, its works council should be involved, particularly if images might capture employees. If the network, internet connection, or AI service becomes unavailable, the inspection process needs a defined fallback, for example, manual inspection.
 
-The rules and the logs stay in the servers, so they hold whatever AI application or model
-is connected. A plant writes the records into its own database, for example the MES, with
-its own protected history, not into text files; and the part's label comes from the line,
-for example from a scanner, not from the AI.
+**Start with read-only tools; introduce actions cautiously.** Begin with tools that retrieve information without changing the state of a machine or production system. Add tools that make changes only when there is a clear operational need, with server-enforced rules and appropriate authorization for each operation. Where an incorrect action could cause a costly rejection or other significant consequence, require an explicit human decision.
 
-Before the AI is trusted with a check, it is tried on parts whose answers are known, good
-and bad, to measure how often it passes a bad part and fails a good one. The model's
-version is fixed; a new model, new instructions, a new camera or new lighting mean
-measuring again. Each record then also names the model and the version of the rule it was
-checked against, which this demo's server does not know.
+A confirmation dialog is not a machine-safety function. Emergency stops, protective interlocks, and other safety-related controls must remain within the appropriate safety systems and controllers. An AI application and its MCP server must never substitute for those controls.
 
-An answer takes about half a minute, so this suits the checks that fixed camera software
-cannot do and that the line can wait for: setting up a new product, the first part of a
-batch, spot checks, a daily check like the scale. At full line speed, trained machine
-vision does the routine checks.
+**Keep business rules and traceability outside the AI.** The server enforces the rules regardless of which compatible AI application or model connects to it. A production deployment would also write inspection records to a controlled database or manufacturing system, such as the MES, rather than relying on local text files. Records would need appropriate access controls, retention, and protection against unauthorized changes. The part identifier should come from a trusted source on the line, such as a barcode scanner or the MES, rather than being invented or supplied by the AI.
 
-The servers are tested like any software, against fakes of the real systems, as the tests
-here run against the fake camera.
+**Validate the inspection task before relying on the results.** Test the system against a representative set of parts whose correct outcomes are already known, including both acceptable and defective examples. Measure the two critical error rates separately: defective parts incorrectly passed and good parts incorrectly rejected. The acceptable rates depend on the product, the consequences of each error, and the inspection requirements.
+
+Fix the model version and inspection configuration used for the validation. A model update, a change in instructions or rules, a different camera, or altered lighting can change the results and should trigger an appropriate reassessment. Each production record should identify the model version and rule or configuration version used for the inspection. This demo's server does not currently track that information.
+
+**Use AI where its flexibility justifies its latency.** An inspection takes roughly half a minute in this demo, making this approach more suitable for checks where fixed machine-vision software is insufficient and the process can accommodate the delay. Examples include product changeovers, first-piece inspections, spot checks, and periodic checks such as verifying a scale reading. For routine inspections at full line speed, conventional machine vision is generally the better choice when it can perform the task reliably within the required cycle time.
+
+**Test the integration, not just the happy path.** Production servers need automated tests against simulated versions of the systems they integrate with, as well as tests of failure handling, authorization, and recovery. The tests in this repository use a fake camera to exercise the same general approach. Before deployment, the integration must also be validated against the actual hardware and plant systems.
 
 ## Reading the code
 
