@@ -391,7 +391,7 @@ def show_error(kind, error, trace) -> None:
 def main() -> None:
     if tk is None:
         sys.exit("This Python has no Tkinter, which the window needs. On Ubuntu and Debian: "
-                 "sudo apt install python3-tk")
+                 f"sudo apt install python{sys.version_info.major}.{sys.version_info.minor}-tk")
     if sys.platform == "win32":   # sharp text on screens scaled above 100 %
         try:
             import ctypes

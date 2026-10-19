@@ -95,6 +95,9 @@ def test_the_station_and_the_live_view_go_to_the_same_server(monkeypatch, argume
 
 def test_trust_gives_the_station_and_the_live_view_the_certificate_authority(monkeypatch):
     context = MagicMock()
+    # Activating a conda environment on Windows sets SSL_CERT_FILE; the Anthropic library
+    # then calls create_default_context(cafile=...), which the stand-in below cannot take.
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
     monkeypatch.setattr(app.ssl, "create_default_context", lambda: context)
     started = start(monkeypatch, "--trust", "certs/ca.pem")
     context.load_verify_locations.assert_called_once_with("certs/ca.pem")

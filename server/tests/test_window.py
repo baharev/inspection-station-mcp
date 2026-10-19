@@ -55,7 +55,7 @@ def test_without_tkinter_the_window_says_how_to_get_it():
         capture_output=True, text=True, cwd=Path(__file__).resolve().parent.parent)
     assert (started.stdout, started.returncode, started.stderr.strip()) == ("loaded\n", 1, (
         "This Python has no Tkinter, which the window needs. On Ubuntu and Debian: "
-        "sudo apt install python3-tk"))
+        f"sudo apt install python{sys.version_info.major}.{sys.version_info.minor}-tk"))
 
 
 def test_the_linux_launcher_quotes_paths_with_spaces():

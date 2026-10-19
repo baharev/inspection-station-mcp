@@ -3,7 +3,7 @@
 Photos from a real camera (1920x1080), of objects on a white surface, served by the fake
 camera ("Sample photos" in the server's list of cameras, or `CAMERA=fake`) one per photo
 taken, in name order. Brand names on the objects are erased. What Claude answered about
-them is in the main README, [What the AI answered](../../README.md#what-the-ai-answered).
+them is in the main README, [Inspecting the sample photos: verdicts and mistakes](../../README.md#inspecting-the-sample-photos-verdicts-and-mistakes).
 
 | File | Scene |
 |---|---|
