@@ -1,5 +1,7 @@
 # Inspection Station MCP
 
+[![Tests](https://github.com/baharev/inspection-station-mcp/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/baharev/inspection-station-mcp/actions/workflows/tests.yml?query=branch%3Amain+event%3Apush)
+
 An AI inspects parts using a camera: it takes photos, zooms in where needed, and decides whether each part passes, fails, or needs further review. The camera is accessed through an MCP server that enforces the inspection rules and maintains an audit trail. **No part is marked as failed without a person's approval.** That rule is enforced by the server, not left to the AI's instructions.
 
 ![The setup. Left: the inspection station, with a camera above a conveyor belt and a station computer running the MCP server and maintaining the inspection log. No AI runs at the station. Right: the operator's computer running the desktop app, which communicates with the MCP server over the network and with Claude, the AI, in the cloud.](docs/setup.svg)
